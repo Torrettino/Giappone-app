@@ -4,13 +4,14 @@ from datetime import datetime, date
 import requests
 import uuid
 
-# ── PAGE CONFIG ──────────────────────────────────────────────────────────────
+# ── PAGE CONFIG ──────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Travel Budget Tracker",
     page_icon="🇯🇵",
     layout="wide"
 )
 
+# ── CSS PERSONALIZZATO PER MOBILE ────────────────────────────────────────
 st.markdown("""
 <style>
     div[data-testid="metric-container"] {
@@ -26,23 +27,39 @@ st.markdown("""
     .block-container {
         padding-top: 1.5rem;
     }
+    
+    /* Mobile: riduce padding su schermi piccoli */
+    @media (max-width: 768px) {
+        .block-container {
+            padding-left: 0.5rem;
+            padding-right: 0.5rem;
+            max-width: 100%;
+        }
+        
+        div[data-testid="stMetricLabel"] {
+            font-size: 0.75rem;
+        }
+    }
 </style>
 """, unsafe_allow_html=True)
 
 st.title("🇯🇵 Gestione Spese Tokyo")
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════
 # SESSION STATE
-# ══════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════
 if "operazioni" not in st.session_state:
     st.session_state["operazioni"] = []
 
 if "tasso_cambio" not in st.session_state:
     st.session_state["tasso_cambio"] = 165.0
 
-# ══════════════════════════════════════════════════════════════════════════════
+if "is_mobile" not in st.session_state:
+    st.session_state["is_mobile"] = False
+
+# ════════════════════════════════════════════════════════════════════════════
 # AUTOMAZIONE PRENOTAZIONI → SPESE
-# ══════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════
 oggi_str = date.today().strftime("%Y-%m-%d")
 
 for op in st.session_state["operazioni"]:
@@ -54,9 +71,10 @@ for op in st.session_state["operazioni"]:
 
         if pd.to_datetime(op["Data Pagamento"]) <= pd.to_datetime(date.today()):
             op["Stato"] = "Spesa Effettiva"
-# ══════════════════════════════════════════════════════════════════════════════
+
+# ════════════════════════════════════════════════════════════════════════════
 # COSTANTI
-# ══════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════
 CATEGORIE = [
     "Trasporti",
     "Alloggi",
@@ -80,9 +98,9 @@ DESTINATARI = [
     "Matilde"
 ]
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════
 # FUNZIONI
-# ══════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════
 def get_live_rate() -> tuple[float, bool]:
 
     try:
@@ -114,14 +132,30 @@ def elimina_per_id(ids):
         if op.get("_id") not in ids
     ]
 
-# ══════════════════════════════════════════════════════════════════════════════
+
+def get_num_columns(context="default"):
+    """
+    Ritorna il numero di colonne ideale basato sul contesto
+    context: "default", "form", "metrics", "quick_tags"
+    """
+    # Su mobile: 1 colonna, su tablet: 2, su desktop: 3+
+    if context == "form":
+        return 1  # Mobile-first: 1 colonna sul form
+    elif context == "metrics":
+        return 2  # Metrics su 2 colonne
+    elif context == "quick_tags":
+        return 2  # Quick tags su 2 per riga
+    else:
+        return 3  # Default: 3 colonne
+
+# ════════════════════════════════════════════════════════════════════════════
 # SIDEBAR
-# ══════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════
 with st.sidebar:
 
     st.header("⚙️ Configurazione")
 
-    # ── TASSO CAMBIO ─────────────────────────────────────────────────────────
+    # ── TASSO CAMBIO ────────────────────────────────────────────────────────
     st.subheader("💱 Tasso EUR→JPY")
 
     tasso_cambio = st.number_input(
@@ -148,114 +182,116 @@ with st.sidebar:
 
     st.divider()
 
-    # ── DATE VIAGGIO ─────────────────────────────────────────────────────────
-    st.subheader("📅 Date Viaggio")
+    # ── TAB CONFIGURAZIONE ───────────────────────────────────────────────────
+    tab_date, tab_budget, tab_backup = st.tabs(["📅 Date", "💰 Budget", "📂 Backup"])
 
-    data_inizio = st.date_input(
-        "Inizio",
-        value=date(2026, 6, 13),
-        key="d_inizio"
-    )
+    with tab_date:
+        st.subheader("Date Viaggio")
 
-    data_fine = st.date_input(
-        "Fine",
-        value=date(2026, 6, 26),
-        key="d_fine"
-    )
+        data_inizio = st.date_input(
+            "Inizio",
+            value=date(2026, 6, 13),
+            key="d_inizio"
+        )
 
-    st.divider()
+        data_fine = st.date_input(
+            "Fine",
+            value=date(2026, 6, 26),
+            key="d_fine"
+        )
 
-    # ── BUDGET ───────────────────────────────────────────────────────────────
-    st.subheader("🎯 Budget e Limiti")
+    with tab_budget:
+        st.subheader("Budget e Limiti")
 
-    budget_totale = st.number_input(
-        "Budget massimo viaggio (€)",
-        min_value=0.0,
-        value=10000.0,
-        step=100.0
-    )
+        budget_totale = st.number_input(
+            "Budget massimo viaggio (€)",
+            min_value=0.0,
+            value=10000.0,
+            step=100.0
+        )
 
-    st.write("---")
-    st.write("💳 Gestione Conti e Carte")
+        st.write("---")
+        st.write("💳 Gestione Conti e Carte")
 
-    fondo_revolut = st.number_input(
-        "Fondo Totale Ricaricato su Revolut (¥)",
-        min_value=0.0,
-        value=250000.0,
-        step=10000.0
-    )
+        fondo_revolut = st.number_input(
+            "Fondo Totale Ricaricato su Revolut (¥)",
+            min_value=0.0,
+            value=250000.0,
+            step=10000.0
+        )
 
-    plafond_cc = st.number_input(
-        "Plafond Mensile CC EUR (€)",
-        min_value=0.0,
-        value=3000.0,
-        step=500.0
-    )
+        plafond_cc = st.number_input(
+            "Plafond Mensile CC EUR (€)",
+            min_value=0.0,
+            value=3000.0,
+            step=500.0
+        )
 
-    st.divider()
+    with tab_backup:
+        st.subheader("Backup e Ripristino")
 
-    # ── BACKUP ───────────────────────────────────────────────────────────────
-    st.subheader("📂 Backup")
+        file_up = st.file_uploader(
+            "Ripristina da CSV",
+            type="csv"
+        )
 
-    file_up = st.file_uploader(
-        "Ripristina da CSV",
-        type="csv"
-    )
+        if file_up:
 
-    if file_up:
+            try:
+                df_imp = pd.read_csv(file_up)
 
-        try:
-            df_imp = pd.read_csv(file_up)
+                if "_id" not in df_imp.columns:
+                    df_imp["_id"] = [
+                        str(uuid.uuid4())
+                        for _ in range(len(df_imp))
+                    ]
 
-            if "_id" not in df_imp.columns:
-                df_imp["_id"] = [
-                    str(uuid.uuid4())
-                    for _ in range(len(df_imp))
+                existing_ids = {
+                    op["_id"]
+                    for op in st.session_state["operazioni"]
+                }
+
+                nuovi = [
+                    r for r in df_imp.to_dict("records")
+                    if r["_id"] not in existing_ids
                 ]
 
-            existing_ids = {
-                op["_id"]
-                for op in st.session_state["operazioni"]
-            }
+                st.session_state["operazioni"].extend(nuovi)
 
-            nuovi = [
-                r for r in df_imp.to_dict("records")
-                if r["_id"] not in existing_ids
-            ]
+                st.success(
+                    f"Importati {len(nuovi)} record "
+                    f"({len(df_imp)-len(nuovi)} duplicati ignorati)"
+                )
 
-            st.session_state["operazioni"].extend(nuovi)
+            except Exception as e:
+                st.error(f"Errore: {e}")
 
-            st.success(
-                f"Importati {len(nuovi)} record "
-                f"({len(df_imp)-len(nuovi)} duplicati ignorati)"
+        st.write("---")
+
+        if st.session_state["operazioni"]:
+
+            df_exp = pd.DataFrame(
+                st.session_state["operazioni"]
             )
 
-        except Exception as e:
-            st.error(f"Errore: {e}")
+            csv_bytes = df_exp.to_csv(
+                index=False
+            ).encode("utf-8")
 
-    if st.session_state["operazioni"]:
+            st.download_button(
+                "⬇️ CSV Backup",
+                data=csv_bytes,
+                file_name="spese_tokyo.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
 
-        df_exp = pd.DataFrame(
-            st.session_state["operazioni"]
-        )
-
-        csv_bytes = df_exp.to_csv(
-            index=False
-        ).encode("utf-8")
-
-        st.download_button(
-            "⬇️ CSV Backup",
-            data=csv_bytes,
-            file_name="spese_tokyo.csv",
-            mime="text/csv"
-        )
-
-# ══════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════
 # NUOVA OPERAZIONE
-# ══════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════
 st.header("➕ Nuova Operazione")
 
-# ── QUICK TAGS ───────────────────────────────────────────────────────────────
+# ── QUICK TAGS ───────────────────────────────────────────────────────────
 QUICK_TAGS = {
     "🚇 Metro": ("Trasporti", "Wallet Contanti", "JPY", 230),
     "🍜 Ramen": ("Cibo", "Wallet Contanti", "JPY", 1200),
@@ -270,12 +306,10 @@ if "quick" not in st.session_state:
 
 st.write("⚡ Preset rapidi")
 
-cols_q = st.columns(len(QUICK_TAGS))
-
+# Mobile-friendly quick tags (2 per riga)
+quick_cols = st.columns(2)
 for i, (label, vals) in enumerate(QUICK_TAGS.items()):
-
-    with cols_q[i]:
-
+    with quick_cols[i % 2]:
         if st.button(
             label,
             use_container_width=True,
@@ -285,84 +319,79 @@ for i, (label, vals) in enumerate(QUICK_TAGS.items()):
 
 q = st.session_state["quick"]
 
-# ── FORM ─────────────────────────────────────────────────────────────────────
+# ── FORM ─────────────────────────────────────────────────────────────────
 with st.form("form_ins", clear_on_submit=True):
 
-    c1, c2, c3 = st.columns(3)
+    # Mobile-first: 1 colonna
+    c1 = st.container()
 
-    # ── COLONNA 1 ────────────────────────────────────────────────────────────
-    with c1:
+    # ── DATI ─────────────────────────────────────────────────────────────
+    data_op = st.date_input(
+        "Data Inserimento",
+        date.today()
+    )
 
-        data_op = st.date_input(
-            "Data Inserimento",
-            date.today()
-        )
+    stato = st.selectbox(
+        "Stato",
+        ["Spesa Effettiva", "Prenotazione"]
+    )
 
-        stato = st.selectbox(
-            "Stato",
-            ["Spesa Effettiva", "Prenotazione"]
-        )
+    data_pag = st.date_input(
+        "Data Addebito Automatico",
+        date.today()
+    )
 
-        data_pag = st.date_input(
-            "Data Addebito Automatico",
-            date.today()
-        )
+    cat_idx = CATEGORIE.index(q[0]) if q else 0
 
-        cat_idx = CATEGORIE.index(q[0]) if q else 0
+    categoria = st.selectbox(
+        "Categoria",
+        CATEGORIE,
+        index=cat_idx
+    )
 
-        categoria = st.selectbox(
-            "Categoria",
-            CATEGORIE,
-            index=cat_idx
-        )
+    # ── FONTE E VALUTA ───────────────────────────────────────────────────
+    sorg_idx = SORGENTI.index(q[1]) if q else 0
 
-    # ── COLONNA 2 ────────────────────────────────────────────────────────────
-    with c2:
+    sorgente = st.selectbox(
+        "Sorgente",
+        SORGENTI,
+        index=sorg_idx
+    )
 
-        sorg_idx = SORGENTI.index(q[1]) if q else 0
+    val_idx = ["JPY", "EUR"].index(q[2]) if q else 0
 
-        sorgente = st.selectbox(
-            "Sorgente",
-            SORGENTI,
-            index=sorg_idx
-        )
+    valuta = st.selectbox(
+        "Valuta",
+        ["JPY", "EUR"],
+        index=val_idx
+    )
 
-        val_idx = ["JPY", "EUR"].index(q[2]) if q else 0
+    importo = st.number_input(
+        "Importo",
+        min_value=0.0,
+        value=float(q[3]) if q else 0.0,
+        step=1.0,
+        format="%.2f"
+    )
 
-        valuta = st.selectbox(
-            "Valuta",
-            ["JPY", "EUR"],
-            index=val_idx
-        )
+    destinatario = st.selectbox(
+        "Destinatario Spesa",
+        DESTINATARI
+    )
 
-        importo = st.number_input(
-            "Importo",
-            min_value=0.0,
-            value=float(q[3]) if q else 0.0,
-            step=1.0,
-            format="%.2f"
-        )
-
-        destinatario = st.selectbox(
-            "Destinatario Spesa",
-            DESTINATARI
-        )
-
-    # ── COLONNA 3 ────────────────────────────────────────────────────────────
-    with c3:
-
-        note = st.text_area(
-            "Note / Descrizione",
-            placeholder="Es: Cena sushi a Shibuya…",
-            height=210
-        )
+    # ── NOTE ─────────────────────────────────────────────────────────────
+    note = st.text_area(
+        "Note / Descrizione",
+        placeholder="Es: Cena sushi a Shibuya…",
+        height=100
+    )
 
     submitted = st.form_submit_button(
         "🚀 Registra",
         use_container_width=True
     )
 
-    # ── SALVATAGGIO ──────────────────────────────────────────────────────────
+    # ── SALVATAGGIO ──────────────────────────────────────────────────────
     if submitted and importo > 0:
 
         imp_eur, imp_jpy = converti(
@@ -411,18 +440,18 @@ with st.form("form_ins", clear_on_submit=True):
 
         st.rerun()
 
-# ── ANNULLA ULTIMA OPERAZIONE ───────────────────────────────────────────────
+# ── ANNULLA ULTIMA OPERAZIONE ────────────────────────────────────────────
 if st.session_state["operazioni"]:
 
-    if st.button("⏪ Annulla ultima operazione"):
+    if st.button("⏪ Annulla ultima operazione", use_container_width=True):
 
         st.session_state["operazioni"].pop()
 
         st.rerun()
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════
 # DASHBOARD
-# ══════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════
 st.divider()
 
 st.header("📊 Cruscotto Finanziario")
@@ -449,7 +478,7 @@ if "Destinatario" not in df.columns:
 df["Data"] = pd.to_datetime(df["Data"])
 df["Data Pagamento"] = pd.to_datetime(df["Data Pagamento"])
 
-# ── DATAFRAME PRINCIPALI ────────────────────────────────────────────────────
+# ── DATAFRAME PRINCIPALI ─────────────────────────────────────────────────
 spese = df[
     df["Stato"] == "Spesa Effettiva"
 ]
@@ -462,7 +491,7 @@ spese_reali = spese[
     spese["Categoria"] != "Prelievo ATM"
 ]
 
-# ── TOTALI ──────────────────────────────────────────────────────────────────
+# ── TOTALI ───────────────────────────────────────────────────────────────
 tot_spesa_eur = spese_reali["Importo EUR"].sum()
 
 tot_spesa_jpy = spese_reali["Importo JPY"].sum()
@@ -489,35 +518,41 @@ budget_residuo = (
     - tot_pren_eur
 )
 
-# ── KPI ──────────────────────────────────────────────────────────────────────
-k1, k2, k3, k4 = st.columns(4)
+# ── KPI (Responsive) ─────────────────────────────────────────────────────
+k1, k2 = st.columns(2)
 
-k1.metric(
-    "Budget Totale",
-    f"€ {budget_totale:,.2f}"
-)
+with k1:
+    st.metric(
+        "Budget Totale",
+        f"€ {budget_totale:,.2f}"
+    )
 
-k2.metric(
-    "Speso",
-    f"€ {tot_spesa_eur:,.2f}",
-    f"¥ {tot_spesa_jpy:,.0f}"
-)
+with k2:
+    st.metric(
+        "Speso",
+        f"€ {tot_spesa_eur:,.2f}",
+        f"¥ {tot_spesa_jpy:,.0f}"
+    )
 
-k3.metric(
-    "Prenotazioni",
-    f"€ {tot_pren_eur:,.2f}"
-)
+k3, k4 = st.columns(2)
 
-k4.metric(
-    "💰 Residuo disponibile",
-    f"€ {budget_residuo:,.2f}",
-    delta="✅ Ok" if budget_residuo >= 0 else "⚠️ Sforato",
-    delta_color="normal"
-    if budget_residuo >= 0
-    else "inverse"
-)
+with k3:
+    st.metric(
+        "Prenotazioni",
+        f"€ {tot_pren_eur:,.2f}"
+    )
 
-# ── BUDGET BAR ──────────────────────────────────────────────────────────────
+with k4:
+    st.metric(
+        "💰 Residuo",
+        f"€ {budget_residuo:,.2f}",
+        delta="✅ Ok" if budget_residuo >= 0 else "⚠️ Sforato",
+        delta_color="normal"
+        if budget_residuo >= 0
+        else "inverse"
+    )
+
+# ── BUDGET BAR ───────────────────────────────────────────────────────────
 if budget_totale > 0:
 
     perc_glob = min(
@@ -533,7 +568,7 @@ if budget_totale > 0:
 
     st.progress(perc_glob)
 
-# ── PROIEZIONE ──────────────────────────────────────────────────────────────
+# ── PROIEZIONE ───────────────────────────────────────────────────────────
 durata = max(
     (data_fine - data_inizio).days + 1,
     1
@@ -568,10 +603,10 @@ if tot_spesa_eur > 0:
 
 st.divider()
 
-# ══════════════════════════════════════════════════════════════════════════════
-# GRAFICI
-# ══════════════════════════════════════════════════════════════════════════════
-g1, g2 = st.columns(2)
+# ════════════════════════════════════════════════════════════════════════════
+# GRAFICI (Responsive)
+# ════════════════════════════════════════════════════════════════════════════
+g1, g2 = st.columns(1)  # Stack verticalmente su mobile
 
 with g1:
 
@@ -629,9 +664,9 @@ with g2:
 
 st.divider()
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════
 # RIPARTIZIONE SPESE
-# ══════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════
 st.subheader("👨‍👩‍👧 Ripartizione Spese")
 
 rip_persona = (
@@ -654,9 +689,9 @@ st.bar_chart(
 
 st.divider()
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════
 # GESTIONE CARTE
-# ══════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════
 st.subheader("💳 Gestione Carte e Conti")
 
 cc_jpy_speso = spese[
@@ -675,23 +710,25 @@ cd_eur = spese[
     spese["Sorgente"] == "Carta Debito EUR"
 ]["Importo EUR"].sum()
 
-c1, c2, c3 = st.columns(3)
+c1, c2 = st.columns(2)
 
-c1.metric(
-    "Conto Revolut",
-    f"¥ {residuo_revolut:,.0f}",
-    f"Speso: ¥ {cc_jpy_speso:,.0f}",
-    delta_color="off"
-)
+with c1:
+    st.metric(
+        "Conto Revolut",
+        f"¥ {residuo_revolut:,.0f}",
+        f"Speso: ¥ {cc_jpy_speso:,.0f}",
+        delta_color="off"
+    )
 
-c2.metric(
-    "Wallet Contanti",
-    f"¥ {saldo_contanti:,.0f}",
-    f"Speso: ¥ {contanti_uscite:,.0f}",
-    delta_color="off"
-)
+with c2:
+    st.metric(
+        "Wallet Contanti",
+        f"¥ {saldo_contanti:,.0f}",
+        f"Speso: ¥ {contanti_uscite:,.0f}",
+        delta_color="off"
+    )
 
-c3.metric(
+st.metric(
     "Carta Debito EUR",
     f"€ {cd_eur:,.2f}",
     "Totale Addebitato",
@@ -730,7 +767,7 @@ if not impegni_cc_eur.empty:
     )
 
     cols_plafond = st.columns(
-        len(plafond_mensile)
+        min(len(plafond_mensile), 2)  # Max 2 colonne
     )
 
     for idx, row in plafond_mensile.iterrows():
@@ -783,15 +820,13 @@ else:
 
 st.divider()
 
-# ══════════════════════════════════════════════════════════════════════════════
-# REGISTRO OPERAZIONI
-# ══════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════
+# REGISTRO OPERAZIONI (Mobile-optimized)
+# ════════════════════════════════════════════════════════════════════════════
 st.subheader("📋 Registro Operazioni")
 
-# ── FILTRI ──────────────────────────────────────────────────────────────────
-f1, f2, f3, f4 = st.columns(4)
-
-with f1:
+# ── FILTRI (Mobile-friendly: stack verticale) ────────────────────────────
+with st.expander("🔍 Filtri", expanded=True):
 
     f_stato = st.multiselect(
         "Stato",
@@ -799,15 +834,11 @@ with f1:
         default=list(df["Stato"].unique())
     )
 
-with f2:
-
     f_cat = st.multiselect(
         "Categoria",
         df["Categoria"].unique(),
         default=list(df["Categoria"].unique())
     )
-
-with f3:
 
     f_sorg = st.multiselect(
         "Sorgente",
@@ -815,15 +846,13 @@ with f3:
         default=list(df["Sorgente"].unique())
     )
 
-with f4:
-
     f_dest = st.multiselect(
         "Destinatario",
         df["Destinatario"].unique(),
         default=list(df["Destinatario"].unique())
     )
 
-# ── FILTRI DATAFRAME ────────────────────────────────────────────────────────
+# ── FILTRI DATAFRAME ─────────────────────────────────────────────────────
 df_vis = df[
     df["Stato"].isin(f_stato)
     &
@@ -834,7 +863,7 @@ df_vis = df[
     df["Destinatario"].isin(f_dest)
 ].copy()
 
-# ── FORMATTAZIONE ───────────────────────────────────────────────────────────
+# ── FORMATTAZIONE ────────────────────────────────────────────────────────
 df_vis["Data"] = df_vis["Data"].dt.strftime("%Y-%m-%d")
 
 df_vis["Data Pagamento"] = (
@@ -842,26 +871,24 @@ df_vis["Data Pagamento"] = (
     .dt.strftime("%Y-%m-%d")
 )
 
-# ── CHECKBOX ELIMINAZIONE ───────────────────────────────────────────────────
+# ── CHECKBOX ELIMINAZIONE ───────────────────────────────────────────────
 df_vis.insert(0, "🗑️", False)
 
-# ── DATA EDITOR ─────────────────────────────────────────────────────────────
+# ── COLONNE MOBILE-FRIENDLY ─────────────────────────────────────────────
+colonne_display = [
+    "🗑️",
+    "_id",
+    "Data",
+    "Categoria",
+    "Importo Originale",
+    "Valuta Originale",
+    "Importo EUR",
+]
+
+# ── DATA EDITOR ──────────────────────────────────────────────────────────
 edited = st.data_editor(
 
-    df_vis[[
-        "🗑️",
-        "_id",
-        "Destinatario",
-        "Data",
-        "Data Pagamento",
-        "Stato",
-        "Categoria",
-        "Sorgente",
-        "Importo Originale",
-        "Valuta Originale",
-        "Importo EUR",
-        "Note"
-    ]],
+    df_vis[colonne_display],
 
     use_container_width=True,
 
@@ -878,11 +905,6 @@ edited = st.data_editor(
             "ID",
             disabled=True,
             width="small"
-        ),
-
-        "Destinatario": st.column_config.TextColumn(
-            "Destinatario",
-            disabled=True
         ),
 
         "Importo Originale":
@@ -902,21 +924,7 @@ edited = st.data_editor(
             disabled=True
         ),
 
-        "Data Pagamento":
-        st.column_config.TextColumn(
-            "Addebito",
-            disabled=True
-        ),
-
-        "Stato": st.column_config.TextColumn(
-            disabled=True
-        ),
-
         "Categoria": st.column_config.TextColumn(
-            disabled=True
-        ),
-
-        "Sorgente": st.column_config.TextColumn(
             disabled=True
         ),
 
@@ -924,14 +932,32 @@ edited = st.data_editor(
         st.column_config.TextColumn(
             disabled=True
         ),
-
-        "Note": st.column_config.TextColumn(
-            disabled=True
-        ),
     },
 )
 
-# ── ELIMINAZIONE ────────────────────────────────────────────────────────────
+# ── DETTAGLI NASCOSTI (Espandibile) ──────────────────────────────────────
+with st.expander("📄 Dettagli Completi"):
+    
+    st.dataframe(
+        df_vis[[
+            "_id",
+            "Destinatario",
+            "Data",
+            "Data Pagamento",
+            "Stato",
+            "Categoria",
+            "Sorgente",
+            "Importo Originale",
+            "Valuta Originale",
+            "Importo EUR",
+            "Importo JPY",
+            "Note"
+        ]],
+        use_container_width=True,
+        hide_index=True
+    )
+
+# ── ELIMINAZIONE ─────────────────────────────────────────────────────────
 da_eliminare = edited[
     edited["🗑️"] == True
 ]["_id"].tolist()
@@ -940,7 +966,8 @@ if da_eliminare:
 
     if st.button(
         f"🗑️ Elimina {len(da_eliminare)} operazione/i",
-        type="primary"
+        type="primary",
+        use_container_width=True
     ):
 
         elimina_per_id(da_eliminare)
