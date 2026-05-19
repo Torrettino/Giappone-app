@@ -23,9 +23,8 @@ if "operazioni" not in st.session_state:
     st.session_state["operazioni"] = []
 if "tasso_cambio" not in st.session_state:
     st.session_state["tasso_cambio"] = 165.0
-
+ 
 # ── AUTOMAZIONE CONVERSIONE PRENOTAZIONI ──────────────────────────────────────
-# Questo blocco controlla ad ogni refresh se una prenotazione è diventata una spesa reale
 oggi_str = date.today().strftime("%Y-%m-%d")
 for op in st.session_state["operazioni"]:
     if op.get("Stato") == "Prenotazione" and op.get("Data Pagamento"):
@@ -90,14 +89,14 @@ with st.sidebar:
  
     st.divider()
  
-    # Budget globale predefinito
-    st.subheader("🎯 Budget")
-    budget_totale = st.number_input("Budget massimo (€)", min_value=0.0, value=10000.0, step=100.0)
- 
-    st.write("**Per categoria (€)**")
-    budget_cat = {}
-    for cat in ["Trasporti", "Alloggi", "Cibo", "Shopping", "Altro"]:
-        budget_cat[cat] = st.number_input(cat, min_value=0.0, value=0.0, step=50.0, key=f"bcat_{cat}", label_visibility="visible")
+    # Budget e Carte
+    st.subheader("🎯 Budget e Limiti")
+    budget_totale = st.number_input("Budget massimo viaggio (€)", min_value=0.0, value=10000.0, step=100.0)
+    
+    st.write("---")
+    st.write("💳 **Gestione Conti e Carte**")
+    fondo_revolut = st.number_input("Fondo Totale Ricaricato su Revolut (¥)", min_value=0.0, value=250000.0, step=10000.0)
+    plafond_cc = st.number_input("Plafond Mensile CC EUR (€)", min_value=0.0, value=3000.0, step=500.0)
  
     st.divider()
  
@@ -122,22 +121,6 @@ with st.sidebar:
         # CSV
         csv_bytes = df_exp.to_csv(index=False).encode("utf-8")
         st.download_button("⬇️ CSV Backup", data=csv_bytes, file_name="spese_tokyo.csv", mime="text/csv")
- 
-        # Excel multi-foglio
-        buf = io.BytesIO()
-        with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-            df_exp.drop(columns=["_id"], errors="ignore").to_excel(writer, sheet_name="Tutte", index=False)
-            for cat in df_exp["Categoria"].unique():
-                slug = cat[:31]
-                df_exp[df_exp["Categoria"] == cat].drop(columns=["_id"], errors="ignore").to_excel(
-                    writer, sheet_name=slug, index=False
-                )
-        st.download_button(
-            "⬇️ Excel per categoria",
-            data=buf.getvalue(),
-            file_name="spese_tokyo.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
  
 # ══════════════════════════════════════════════════════════════════════════════
 # SEZIONE 1 — INSERIMENTO NUOVA OPERAZIONE
@@ -172,8 +155,7 @@ with st.form("form_ins", clear_on_submit=True):
     with c1:
         data_op   = st.date_input("Data Inserimento", date.today())
         stato     = st.selectbox("Stato", ["Spesa Effettiva", "Prenotazione"])
-        # Nuovo campo per gestire la scadenza futura dei pagamenti automatici
-        data_pag  = st.date_input("Data Addebito Automatico (Se Prenotazione)", date.today())
+        data_pag  = st.date_input("Data Addebito Automatico", date.today())
         cat_idx   = CATEGORIE.index(q[0]) if q else 0
         categoria = st.selectbox("Categoria", CATEGORIE, index=cat_idx)
  
@@ -194,7 +176,6 @@ with st.form("form_ins", clear_on_submit=True):
         imp_eur, imp_jpy = converti(imp_split, valuta, tasso_cambio)
         nota_fin = (f"[÷{n_persone}] " if n_persone > 1 else "") + (note if note else "-")
         
-        # Salviamo la data di pagamento prevista nel database delle operazioni
         st.session_state["operazioni"].append({
             "_id":              str(uuid.uuid4()),
             "Data":             data_op.strftime("%Y-%m-%d"),
@@ -230,8 +211,9 @@ if not st.session_state["operazioni"]:
 df = pd.DataFrame(st.session_state["operazioni"])
 if "Data Pagamento" not in df.columns:
     df["Data Pagamento"] = df["Data"]
-
+ 
 df["Data"] = pd.to_datetime(df["Data"])
+df["Data Pagamento"] = pd.to_datetime(df["Data Pagamento"])
  
 spese        = df[df["Stato"] == "Spesa Effettiva"]
 prenotazioni = df[df["Stato"] == "Prenotazione"]
@@ -259,7 +241,7 @@ k4.metric(
     delta_color="normal" if budget_residuo >= 0 else "inverse"
 )
  
-# Barra budget globale (Visuale sul totale complessivo)
+# Barra budget globale
 if budget_totale > 0:
     perc_glob = min((tot_spesa_eur + tot_pren_eur) / budget_totale, 1.0)
     st.write(f"**Utilizzo budget globale (Speso + Prenotato):** {perc_glob*100:.1f}%")
@@ -297,11 +279,6 @@ with g1:
  
         st.bar_chart(rip.set_index("Categoria")["Importo EUR"])
  
-        rip_display = rip[["Categoria","Importo EUR","%"]].copy()
-        rip_display["Importo EUR"] = rip_display["Importo EUR"].map("€ {:,.2f}".format)
-        rip_display["%"] = rip_display["%"].map("{:.1f}%".format)
-        st.dataframe(rip_display, use_container_width=True, hide_index=True)
- 
 with g2:
     st.subheader("📈 Andamento Giornaliero Spese")
     if not spese_reali.empty:
@@ -318,32 +295,54 @@ with g2:
  
 st.divider()
  
-# ── BUDGET PER CATEGORIA ──────────────────────────────────────────────────────
-cat_con_budget = {c: v for c, v in budget_cat.items() if v > 0}
-if cat_con_budget:
-    st.subheader("🏷️ Budget per Categoria")
-    cols_bc = st.columns(len(cat_con_budget))
-    for i, (cat, bgt) in enumerate(cat_con_budget.items()):
-        with cols_bc[i]:
-            speso = spese_reali[spese_reali["Categoria"] == cat]["Importo EUR"].sum()
-            perc  = min(speso / bgt, 1.0)
-            st.write(f"**{cat}**")
-            st.write(f"€ {speso:,.0f} / € {bgt:,.0f}")
-            st.progress(perc)
-            if speso > bgt:
-                st.warning("⚠️ Sforato")
-    st.divider()
+# ── GESTIONE CARTE E CONTI ────────────────────────────────────────────────────
+st.subheader("💳 Gestione Carte e Conti")
  
-# ── ESPOSIZIONE CARTE ─────────────────────────────────────────────────────────
-st.subheader("💳 Esposizione per Metodo di Pagamento")
-c1, c2, c3, c4 = st.columns(4)
-cc_jpy = spese[spese["Sorgente"] == "Carta Credito JPY"]["Importo JPY"].sum()
-cc_eur = spese[spese["Sorgente"] == "Carta Credito EUR"]["Importo EUR"].sum()
+# 1. Calcolo Revolut (Prepagata)
+cc_jpy_speso = spese[spese["Sorgente"] == "Carta Credito JPY"]["Importo JPY"].sum()
+cc_jpy_prenotato = prenotazioni[prenotazioni["Sorgente"] == "Carta Credito JPY"]["Importo JPY"].sum()
+residuo_revolut = fondo_revolut - cc_jpy_speso
+ 
+# 2. Calcolo CD
 cd_eur = spese[spese["Sorgente"] == "Carta Debito EUR"]["Importo EUR"].sum()
-c1.metric("CC JPY",  f"¥ {cc_jpy:,.0f}",  f"≈ € {cc_jpy/tasso_cambio:,.2f}")
-c2.metric("CC EUR",  f"€ {cc_eur:,.2f}")
-c3.metric("CD EUR",  f"€ {cd_eur:,.2f}")
-c4.metric("Contanti",f"¥ {saldo_contanti:,.0f}", f"≈ € {saldo_contanti/tasso_cambio:,.2f}")
+ 
+# Metriche Superiori (Revolut, Contanti, Carta di Debito)
+c1, c2, c3 = st.columns(3)
+c1.metric("Conto Revolut (CC JPY)", f"¥ {residuo_revolut:,.0f}", f"Speso finora: ¥ {cc_jpy_speso:,.0f}", delta_color="off")
+c2.metric("Wallet Contanti", f"¥ {saldo_contanti:,.0f}", f"Speso: ¥ {contanti_uscite:,.0f}", delta_color="off")
+c3.metric("Carta Debito EUR", f"€ {cd_eur:,.2f}", "Totale Addebitato", delta_color="off")
+ 
+if cc_jpy_prenotato > 0:
+    st.caption(f"📌 *Nota: Hai ¥ {cc_jpy_prenotato:,.0f} di prenotazioni in sospeso su Revolut non ancora detratte dal saldo reale.*")
+ 
+st.write("---")
+st.write("📈 **Controllo Plafond Mensile: Carta Credito EUR**")
+st.write("*(Il calcolo include spese effettive e prenotazioni raggruppate per mese di addebito)*")
+ 
+# 3. Controllo Plafond Mensile CC EUR (Usiamo 'df' per includere anche le prenotazioni future)
+impegni_cc_eur = df[df["Sorgente"] == "Carta Credito EUR"].copy()
+ 
+if not impegni_cc_eur.empty:
+    impegni_cc_eur["Mese"] = impegni_cc_eur["Data Pagamento"].dt.strftime("%Y-%m")
+    plafond_mensile = impegni_cc_eur.groupby("Mese")["Importo EUR"].sum().reset_index()
+    
+    cols_plafond = st.columns(len(plafond_mensile))
+    for idx, row in plafond_mensile.iterrows():
+        mese = row["Mese"]
+        impegno_mese = row["Importo EUR"]
+        residuo_mese = plafond_cc - impegno_mese
+        perc = min(impegno_mese / plafond_cc, 1.0) if plafond_cc > 0 else 1.0
+        
+        with cols_plafond[idx % len(cols_plafond)]:
+            st.write(f"**Mese Addebito: {mese}**")
+            st.write(f"Impegnato: € {impegno_mese:,.2f} / € {plafond_cc:,.0f}")
+            st.progress(perc)
+            if residuo_mese >= 0:
+                st.success(f"Disponibilità residua: **€ {residuo_mese:,.2f}**")
+            else:
+                st.error(f"⚠️ Plafond superato di: **€ {abs(residuo_mese):,.2f}**")
+else:
+    st.info("Nessun addebito registrato su Carta Credito EUR.")
  
 st.divider()
  
@@ -367,7 +366,9 @@ df_vis = df[
     df["Sorgente"].isin(f_sorg)
 ].copy()
  
+# Formattazione per la visualizzazione nella tabella
 df_vis["Data"] = df_vis["Data"].dt.strftime("%Y-%m-%d")
+df_vis["Data Pagamento"] = df_vis["Data Pagamento"].dt.strftime("%Y-%m-%d")
  
 # Colonna Elimina (checkbox)
 df_vis.insert(0, "🗑️", False)
@@ -382,7 +383,7 @@ edited = st.data_editor(
         "Importo Originale": st.column_config.NumberColumn("Importo", format="%.2f"),
         "Importo EUR":       st.column_config.NumberColumn("EUR",    format="€ %.2f"),
         "Data":    st.column_config.TextColumn("Data Ins.", disabled=True),
-        "Data Pagamento": st.column_config.TextColumn("Data Scad.", disabled=True),
+        "Data Pagamento": st.column_config.TextColumn("Data Addebito", disabled=True),
         "Stato":   st.column_config.TextColumn(disabled=True),
         "Categoria": st.column_config.TextColumn(disabled=True),
         "Sorgente":  st.column_config.TextColumn(disabled=True),
