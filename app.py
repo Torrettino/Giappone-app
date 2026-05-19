@@ -893,67 +893,57 @@ if tot_spesa_eur > 0:
 
 st.divider()
 
-# ════════════════════���═════════════════════════════════════════════[...]
-# GRAFICI (Responsive)
 # ══════════════════════════════════════════════════════════════════[...]
-g1, g2 = st.columns(1)  # Stack verticalmente su mobile
+# GRAFICI (Responsive - Stack automatico su Mobile)
+# ══════════════════════════════════════════════════════════════════[...]
 
-with g1:
+# Rimosso st.columns(1) per permettere il corretto posizionamento verticale su smartphone
+st.subheader("🥧 Ripartizione per Categoria")
 
-    st.subheader("🥧 Ripartizione per Categoria")
+if not spese_reali.empty:
 
-    if not spese_reali.empty:
+    rip = (
+        spese_reali
+        .groupby("Categoria")["Importo EUR"]
+        .sum()
+        .reset_index()
+        .sort_values("Importo EUR", ascending=False)
+    )
 
-        rip = (
-            spese_reali
-            .groupby("Categoria")["Importo EUR"]
-            .sum()
-            .reset_index()
-        )
+    st.bar_chart(
+        rip.set_index("Categoria")["Importo EUR"]
+    )
 
-        rip = rip.sort_values(
-            "Importo EUR",
-            ascending=False
-        )
 
-        st.bar_chart(
-            rip.set_index("Categoria")["Importo EUR"]
-        )
+st.subheader("📈 Andamento Giornaliero")
 
-with g2:
+if not spese_reali.empty:
 
-    st.subheader("📈 Andamento Giornaliero")
+    daily = (
+        spese_reali
+        .groupby("Data")["Importo EUR"]
+        .sum()
+        .reset_index()
+        .sort_values("Data")
+    )
 
-    if not spese_reali.empty:
+    daily["Cumulato (€)"] = (
+        daily["Importo EUR"].cumsum()
+    )
 
-        daily = (
-            spese_reali
-            .groupby("Data")["Importo EUR"]
-            .sum()
-            .reset_index()
-            .sort_values("Data")
-        )
+    daily = daily.rename(columns={
+        "Importo EUR":
+        "Spesa del giorno (€)"
+    })
 
-        daily["Cumulato (€)"] = (
-            daily["Importo EUR"].cumsum()
-        )
-
-        daily = daily.rename(columns={
-            "Importo EUR":
-            "Spesa del giorno (€)"
-        })
-
-        st.line_chart(
-            daily.set_index("Data")[
-                [
-                    "Spesa del giorno (€)",
-                    "Cumulato (€)"
-                ]
+    st.line_chart(
+        daily.set_index("Data")[
+            [
+                "Spesa del giorno (€)",
+                "Cumulato (€)"
             ]
-        )
-
-st.divider()
-
+        ]
+    )
 # ══════════════════════════════════════════════════════════════════[...]
 # RIPARTIZIONE SPESE
 # ══════════════════════════════════════════════════════════════════[...]
