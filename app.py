@@ -5,9 +5,6 @@ import pandas as pd
 st.set_page_config(page_title="Travel Budget Tracker", page_icon="🇯🇵")
 st.title("Gestione Spese Tokyo 🇯🇵")
 
-# SOGLIA DI BUDGET (Modifica questa cifra in base alle tue esigenze)
-BUDGET_TOTALE_EUR = 1500.00 
-
 # Tasso di cambio fisso
 TASSO_CAMBIO = 165.00
 
@@ -15,19 +12,21 @@ TASSO_CAMBIO = 165.00
 if 'operazioni' not in st.session_state:
     st.session_state['operazioni'] = []
 
-# --- GESTIONE DATI: BACKUP E RIPRISTINO ---
+# --- GESTIONE DATI: BACKUP E RIPRISTINO (Implementazione 1) ---
 with st.expander("💾 Salvataggio e Ripristino Dati (Backup)"):
     st.write("Fai un backup a fine giornata per non perdere i dati se chiudi il browser.")
     
+    # Ricarica da CSV
     file_caricato = st.file_uploader("Ripristina da un backup precedente", type="csv")
     if file_caricato is not None:
         try:
             df_importato = pd.read_csv(file_caricato)
             st.session_state['operazioni'] = df_importato.to_dict('records')
-            st.success("Dati caricati con successo!")
-        except Exception:
+            st.success("Dati caricati con successo! Ricarica la pagina se non vedi i totali aggiornati.")
+        except Exception as e:
             st.error("Errore nel caricamento del file.")
 
+    # Esporta in CSV
     if st.session_state['operazioni']:
         df_export = pd.DataFrame(st.session_state['operazioni'])
         csv = df_export.to_csv(index=False).encode('utf-8')
@@ -70,12 +69,12 @@ with st.form("form_inserimento"):
         })
         st.success("Operazione registrata!")
 
-# --- STORNO ERRORI ---
+# --- STORNO ERRORI (Implementazione 3) ---
 if st.session_state['operazioni']:
     if st.button("⚠️ Annulla Ultima Operazione"):
         st.session_state['operazioni'].pop()
         st.success("Ultima operazione rimossa!")
-        st.rerun()
+        st.rerun() # Ricarica istantaneamente l'app per mostrare i totali corretti
 
 # --- DASHBOARD E CALCOLI DI BILANCIO ---
 st.divider()
@@ -97,18 +96,6 @@ if st.session_state['operazioni']:
     tot_spesa_eur = spese_reali['Importo EUR'].sum()
     tot_spesa_jpy = spese_reali['Importo JPY'].sum()
 
-    # --- INDICATORE VISIVO BUDGET ATTUALE VS TARGET ---
-    # Unisce le spese reali e le prenotazioni per darti l'impegno finanziario totale impegnato
-    totale_impegnato_eur = tot_spesa_eur + tot_prenotazioni_eur
-    percentuale_budget = min(float(totale_impegnato_eur / BUDGET_TOTALE_EUR), 1.0)
-    
-    st.write(f"📊 **Monitoraggio Budget Globale:** {percentuale_budget*100:.1f}% utilizzato (€ {totale_impegnato_eur:,.2f} su € {BUDGET_TOTALE_EUR:,.2f})")
-    st.progress(percentuale_budget)
-    if totale_impegnato_eur > BUDGET_TOTALE_EUR:
-        st.error(f"⚠️ Attenzione: Hai superato la soglia budget prefissata di € {BUDGET_TOTALE_EUR:,.2f}!")
-    st.write("") # Spazio
-
-    # TOTALI METRICI
     colA, colB, colC = st.columns(3)
     colA.metric("Spesa Effettiva", f"€ {tot_spesa_eur:,.2f}", f"¥ {tot_spesa_jpy:,.0f}")
     colB.metric("Prenotazioni", f"€ {tot_prenotazioni_eur:,.2f}")
@@ -124,7 +111,3 @@ if st.session_state['operazioni']:
 
 else:
     st.info("Nessuna operazione. Inizia a inserire le tue spese!")
-        st.dataframe(df[['Data', 'Stato', 'Categoria', 'Sorgente', 'Importo Originale', 'Valuta Originale', 'Note']], use_container_width=True)
-
-else:
-    st.info("Nessuna operazione registrata. Configura i tuoi parametri e inizia ad inserire i dati!")
