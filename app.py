@@ -85,7 +85,8 @@ CATEGORIE = [
     "Cibo",
     "Shopping",
     "Altro",
-    "Prelievo ATM"
+    "Prelievo ATM",
+    "Ricarica Revolut"
 ]
 
 SORGENTI = [
@@ -168,6 +169,26 @@ def get_sorgenti_usate():
     
     return sorted(sorgenti_usate)
 
+
+def calcola_saldo_revolut():
+    """Calcola il saldo attuale del conto Revolut"""
+    if not st.session_state["operazioni"]:
+        return 0
+    
+    df_temp = pd.DataFrame(st.session_state["operazioni"])
+    
+    # Somma ricariche (positive)
+    ricariche = df_temp[
+        df_temp["Categoria"] == "Ricarica Revolut"
+    ]["Importo JPY"].sum()
+    
+    # Somma spese Revolut (negative)
+    spese = df_temp[
+        df_temp["Sorgente"] == "Carta Credito JPY"
+    ]["Importo JPY"].sum()
+    
+    return ricariche - spese
+
 # ════════════════════════════════════════════════════════════════════════════
 # SIDEBAR
 # ════════════════════════════════════════════════════════════════════════════
@@ -234,13 +255,6 @@ with st.sidebar:
 
         st.write("---")
         st.write("💳 Gestione Conti e Carte")
-
-        fondo_revolut = st.number_input(
-            "Fondo Totale Ricaricato su Revolut (¥)",
-            min_value=0.0,
-            value=250000.0,
-            step=10000.0
-        )
 
         plafond_cc = st.number_input(
             "Plafond Mensile CC EUR (€)",
@@ -536,6 +550,157 @@ if st.session_state["operazioni"]:
         st.rerun()
 
 # ════════════════════════════════════════════════════════════════════════════
+# RICARICA REVOLUT (Sezione dedicata)
+# ════════════════════════════════════════════════════════════════════════════
+st.divider()
+
+st.header("🏧 Gestione Conto Revolut (¥)")
+
+saldo_revolut = calcola_saldo_revolut()
+
+col_saldo, col_ricarica = st.columns([2, 1])
+
+with col_saldo:
+    st.metric(
+        "Saldo Attuale",
+        f"¥ {saldo_revolut:,.0f}"
+    )
+
+with col_ricarica:
+    st.write("")  # Spacer
+    st.write("")
+    if st.button("💰 Ricarica", use_container_width=True):
+        st.session_state["show_ricarica_form"] = True
+
+if "show_ricarica_form" not in st.session_state:
+    st.session_state["show_ricarica_form"] = False
+
+if st.session_state["show_ricarica_form"]:
+    
+    with st.form("form_ricarica", clear_on_submit=True):
+        
+        st.subheader("💳 Aggiungi Fondi a Revolut")
+        
+        importo_ricarica = st.number_input(
+            "Importo da aggiungere (¥)",
+            min_value=0.0,
+            value=0.0,
+            step=1000.0,
+            format="%.0f"
+        )
+        
+        sorgente_ricarica = st.selectbox(
+            "Sorgente Ricarica",
+            ["Carta Credito EUR", "Carta Debito EUR", "Trasferimento Bancario"]
+        )
+        
+        data_ricarica = st.date_input(
+            "Data Ricarica",
+            date.today()
+        )
+        
+        note_ricarica = st.text_area(
+            "Note (facoltativo)",
+            placeholder="Es: Ricarica prima del viaggio...",
+            height=80
+        )
+        
+        col_submit, col_cancel = st.columns(2)
+        
+        with col_submit:
+            submitted_ricarica = st.form_submit_button(
+                "✅ Conferma Ricarica",
+                use_container_width=True,
+                type="primary"
+            )
+        
+        with col_cancel:
+            if st.form_submit_button(
+                "❌ Annulla",
+                use_container_width=True
+            ):
+                st.session_state["show_ricarica_form"] = False
+                st.rerun()
+        
+        if submitted_ricarica and importo_ricarica > 0:
+            
+            # Converti importo EUR a JPY se sorgente è carta EUR
+            if "EUR" in sorgente_ricarica:
+                importo_eur = importo_ricarica / tasso_cambio
+            else:
+                importo_eur = 0
+            
+            nota_ricarica_fin = (
+                f"Ricarica da {sorgente_ricarica} | "
+                + (note_ricarica if note_ricarica else "-")
+            )
+            
+            st.session_state["operazioni"].append({
+                
+                "_id": str(uuid.uuid4()),
+                
+                "Destinatario": "Revolut",
+                
+                "Data": data_ricarica.strftime("%Y-%m-%d"),
+                
+                "Data Pagamento": data_ricarica.strftime("%Y-%m-%d"),
+                
+                "Stato": "Spesa Effettiva",
+                
+                "Categoria": "Ricarica Revolut",
+                
+                "Sorgente": sorgente_ricarica,
+                
+                "Valuta Originale": "JPY",
+                
+                "Importo Originale": round(importo_ricarica, 0),
+                
+                "Importo EUR": round(importo_eur, 4),
+                
+                "Importo JPY": round(importo_ricarica, 0),
+                
+                "Note": nota_ricarica_fin,
+            })
+            
+            st.session_state["show_ricarica_form"] = False
+            
+            st.success(f"✅ Ricarica di ¥ {importo_ricarica:,.0f} registrata!")
+            st.rerun()
+
+# ── STORICO RICARICHE ────────────────────────────────────────────────────
+if st.session_state["operazioni"]:
+    
+    df_storico = pd.DataFrame(st.session_state["operazioni"])
+    ricariche = df_storico[
+        df_storico["Categoria"] == "Ricarica Revolut"
+    ]
+    
+    if not ricariche.empty:
+        
+        with st.expander("📋 Storico Ricariche", expanded=False):
+            
+            ricariche_display = ricariche[[
+                "Data",
+                "Importo Originale",
+                "Sorgente",
+                "Note"
+            ]].copy()
+            
+            ricariche_display.columns = ["Data", "Importo (¥)", "Sorgente", "Note"]
+            ricariche_display["Importo (¥)"] = (
+                ricariche_display["Importo (¥)"].astype(int).apply(lambda x: f"¥ {x:,}")
+            )
+            
+            st.dataframe(
+                ricariche_display.sort_values("Data", ascending=False),
+                use_container_width=True,
+                hide_index=True
+            )
+            
+            tot_ricariche = ricariche["Importo JPY"].sum()
+            st.caption(f"**Totale ricariche:** ¥ {tot_ricariche:,.0f}")
+
+# ════════════════════════════════════════════════════════════════════════════
 # DASHBOARD
 # ════════════════════════════════════════════════════════════════════════════
 st.divider()
@@ -574,7 +739,8 @@ prenotazioni = df[
 ]
 
 spese_reali = spese[
-    spese["Categoria"] != "Prelievo ATM"
+    (spese["Categoria"] != "Prelievo ATM") &
+    (spese["Categoria"] != "Ricarica Revolut")
 ]
 
 # ── TOTALI ───────────────────────────────────────────────────────────────
@@ -592,6 +758,8 @@ contanti_uscite = spese[
     (spese["Sorgente"] == "Wallet Contanti")
     &
     (spese["Categoria"] != "Prelievo ATM")
+    &
+    (spese["Categoria"] != "Ricarica Revolut")
 ]["Importo JPY"].sum()
 
 saldo_contanti = (
@@ -781,16 +949,13 @@ st.divider()
 st.subheader("💳 Gestione Carte e Conti")
 
 cc_jpy_speso = spese[
-    spese["Sorgente"] == "Carta Credito JPY"
+    (spese["Sorgente"] == "Carta Credito JPY") &
+    (spese["Categoria"] != "Ricarica Revolut")
 ]["Importo JPY"].sum()
 
 cc_jpy_prenotato = prenotazioni[
     prenotazioni["Sorgente"] == "Carta Credito JPY"
 ]["Importo JPY"].sum()
-
-residuo_revolut = (
-    fondo_revolut - cc_jpy_speso
-)
 
 cd_eur = spese[
     spese["Sorgente"] == "Carta Debito EUR"
@@ -801,7 +966,7 @@ c1, c2 = st.columns(2)
 with c1:
     st.metric(
         "Conto Revolut",
-        f"¥ {residuo_revolut:,.0f}",
+        f"¥ {saldo_revolut:,.0f}",
         f"Speso: ¥ {cc_jpy_speso:,.0f}",
         delta_color="off"
     )
