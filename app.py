@@ -956,7 +956,12 @@ else:
 
     st.caption(
         "☝️ Spunta la colonna 🗑️ per eliminare righe."
-    )PERSONE = ["Francesco", "Guia", "Matilde"]
+    DESTINATARI = [
+    "Famiglia",
+    "Francesco",
+    "Guia",
+    "Matilde"
+]
 
 
 def get_live_rate() -> tuple[float, bool]:
