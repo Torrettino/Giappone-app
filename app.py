@@ -5,9 +5,9 @@ import requests
 import uuid
 # ── PAGE CONFIG ──────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Travel Budget Tracker",
-    page_icon="🇯🇵",
-    layout="wide"
+    page_title="Travel Budget Tracker",
+    page_icon="🇯🇵",
+    layout="centered"
 )
 st.markdown("""
 <style>
