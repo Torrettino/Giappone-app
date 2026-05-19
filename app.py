@@ -3,6 +3,35 @@ import pandas as pd
 from datetime import datetime, date
 import requests
 import uuid
+import json
+import os
+
+# ── PERSISTENZA DATI ─────────────────────────────────────────────────────
+DATA_DIR = "dati_spese"
+DATA_FILE = os.path.join(DATA_DIR, "spese_tokyo.json")
+
+# Crea la cartella se non esiste
+if not os.path.exists(DATA_DIR):
+    os.makedirs(DATA_DIR)
+
+def load_data():
+    """Carica i dati dal file JSON"""
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            st.error(f"Errore nel caricamento dei dati: {e}")
+            return []
+    return []
+
+def save_data(operazioni):
+    """Salva i dati nel file JSON"""
+    try:
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(operazioni, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        st.error(f"Errore nel salvataggio dei dati: {e}")
 
 # ── PAGE CONFIG ──────────────────────────────────────────────────────────
 st.set_page_config(
@@ -45,11 +74,11 @@ st.markdown("""
 
 st.title("🇯🇵 Gestione Spese Tokyo")
 
-# ════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════[...]
 # SESSION STATE
-# ════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════[...]
 if "operazioni" not in st.session_state:
-    st.session_state["operazioni"] = []
+    st.session_state["operazioni"] = load_data()
 
 if "tasso_cambio" not in st.session_state:
     st.session_state["tasso_cambio"] = 165.0
@@ -61,9 +90,9 @@ if "quick_presets" not in st.session_state:
 if "quick_selected" not in st.session_state:
     st.session_state["quick_selected"] = None
 
-# ════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════[...]
 # AUTOMAZIONE PRENOTAZIONI → SPESE
-# ════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════[...]
 oggi_str = date.today().strftime("%Y-%m-%d")
 
 for op in st.session_state["operazioni"]:
@@ -76,9 +105,9 @@ for op in st.session_state["operazioni"]:
         if pd.to_datetime(op["Data Pagamento"]) <= pd.to_datetime(date.today()):
             op["Stato"] = "Spesa Effettiva"
 
-# ════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════[...]
 # COSTANTI
-# ════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════[...]
 CATEGORIE = [
     "Trasporti",
     "Alloggi",
@@ -103,9 +132,9 @@ DESTINATARI = [
     "Matilde"
 ]
 
-# ════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════[...]
 # FUNZIONI
-# ════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════[...]
 def get_live_rate() -> tuple[float, bool]:
 
     try:
@@ -136,6 +165,7 @@ def elimina_per_id(ids):
         op for op in st.session_state["operazioni"]
         if op.get("_id") not in ids
     ]
+    save_data(st.session_state["operazioni"])
 
 
 def get_categorie_usate():
@@ -189,9 +219,9 @@ def calcola_saldo_revolut():
     
     return ricariche - spese
 
-# ════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════[...]
 # SIDEBAR
-# ════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════[...]
 with st.sidebar:
 
     st.header("⚙️ Configurazione")
@@ -362,6 +392,7 @@ with st.sidebar:
                 ]
 
                 st.session_state["operazioni"].extend(nuovi)
+                save_data(st.session_state["operazioni"])
 
                 st.success(
                     f"Importati {len(nuovi)} record "
@@ -391,9 +422,9 @@ with st.sidebar:
                 use_container_width=True
             )
 
-# ════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════[...]
 # NUOVA OPERAZIONE
-# ════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════[...]
 st.header("➕ Nuova Operazione")
 
 # ── QUICK TAGS (Nascosti in expander) ───────────────────────────────────────
@@ -414,10 +445,10 @@ if st.session_state["quick_presets"]:
 
 q = st.session_state["quick_selected"]
 
-# ── FORM ─────────────────────────────────────────────────────────────────
+# ── FORM ──────────────────────────────────────────────────────────────[...]
 with st.form("form_ins", clear_on_submit=True):
 
-    # ── DATI ─────────────────────────────────────────────────────────────
+    # ── DATI ────────────────────────────────────────────────────────────[...]
     data_op = st.date_input(
         "Data Inserimento",
         date.today()
@@ -479,7 +510,7 @@ with st.form("form_ins", clear_on_submit=True):
         DESTINATARI
     )
 
-    # ── NOTE ─────────────────────────────────────────────────────────────
+    # ── NOTE ────────────────────────────────────────────────────────────[...]
     note = st.text_area(
         "Note / Descrizione",
         placeholder="Es: Cena sushi a Shibuya…",
@@ -532,6 +563,8 @@ with st.form("form_ins", clear_on_submit=True):
             "Note": nota_fin,
         })
 
+        save_data(st.session_state["operazioni"])
+
         st.session_state["quick_selected"] = None
 
         st.success(
@@ -546,12 +579,13 @@ if st.session_state["operazioni"]:
     if st.button("⏪ Annulla ultima operazione", use_container_width=True):
 
         st.session_state["operazioni"].pop()
+        save_data(st.session_state["operazioni"])
 
         st.rerun()
 
-# ════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════���═══════════[...]
 # RICARICA REVOLUT (Sezione dedicata)
-# ════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════[...]
 st.divider()
 
 st.header("🏧 Gestione Conto Revolut (¥)")
@@ -662,6 +696,8 @@ if st.session_state["show_ricarica_form"]:
                 "Note": nota_ricarica_fin,
             })
             
+            save_data(st.session_state["operazioni"])
+            
             st.session_state["show_ricarica_form"] = False
             
             st.success(f"✅ Ricarica di ¥ {importo_ricarica:,.0f} registrata!")
@@ -700,9 +736,9 @@ if st.session_state["operazioni"]:
             tot_ricariche = ricariche["Importo JPY"].sum()
             st.caption(f"**Totale ricariche:** ¥ {tot_ricariche:,.0f}")
 
-# ════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════[...]
 # DASHBOARD
-# ════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════[...]
 st.divider()
 
 st.header("📊 Cruscotto Finanziario")
@@ -743,7 +779,7 @@ spese_reali = spese[
     (spese["Categoria"] != "Ricarica Revolut")
 ]
 
-# ── TOTALI ───────────────────────────────────────────────────────────────
+# ── TOTALI ─────────────────────────────────────────────────────────────[...]
 tot_spesa_eur = spese_reali["Importo EUR"].sum()
 
 tot_spesa_jpy = spese_reali["Importo JPY"].sum()
@@ -857,9 +893,9 @@ if tot_spesa_eur > 0:
 
 st.divider()
 
-# ════════════════════════════════════════════════════════════════════════════
+# ════════════════════���═════════════════════════════════════════════[...]
 # GRAFICI (Responsive)
-# ════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════[...]
 g1, g2 = st.columns(1)  # Stack verticalmente su mobile
 
 with g1:
@@ -918,9 +954,9 @@ with g2:
 
 st.divider()
 
-# ════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════[...]
 # RIPARTIZIONE SPESE
-# ════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════[...]
 st.subheader("👨‍👩‍👧 Ripartizione Spese")
 
 rip_persona = (
@@ -943,9 +979,9 @@ st.bar_chart(
 
 st.divider()
 
-# ════════════════════════════════════════════════════════════════════════════
+# ════════════════════���═════════════════════════════════════════════[...]
 # GESTIONE CARTE
-# ════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════[...]
 st.subheader("💳 Gestione Carte e Conti")
 
 cc_jpy_speso = spese[
@@ -1071,9 +1107,9 @@ else:
 
 st.divider()
 
-# ════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════[...]
 # REGISTRO OPERAZIONI (Mobile-optimized)
-# ════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════[...]
 st.subheader("📋 Registro Operazioni")
 
 # ── FILTRI (Mobile-friendly: stack verticale) ────────────────────────────
