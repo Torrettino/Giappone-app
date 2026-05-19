@@ -366,9 +366,9 @@ with st.sidebar:
         st.subheader("Backup e Ripristino")
 
         file_up = st.file_uploader(
-            "Ripristina da CSV",
-            type="csv"
-        )
+    "Ripristina da CSV", 
+    type=["csv", "txt", "xlsx"]  # Accetta più estensioni per sbloccare la selezione su Android
+)
 
         if file_up:
 
