@@ -54,8 +54,12 @@ if "operazioni" not in st.session_state:
 if "tasso_cambio" not in st.session_state:
     st.session_state["tasso_cambio"] = 165.0
 
-if "is_mobile" not in st.session_state:
-    st.session_state["is_mobile"] = False
+if "quick_presets" not in st.session_state:
+    # Preset di default vuoti - l'utente li customize
+    st.session_state["quick_presets"] = {}
+
+if "quick_selected" not in st.session_state:
+    st.session_state["quick_selected"] = None
 
 # ════════════════════════════════════════════════════════════════════════════
 # AUTOMAZIONE PRENOTAZIONI → SPESE
@@ -133,20 +137,36 @@ def elimina_per_id(ids):
     ]
 
 
-def get_num_columns(context="default"):
-    """
-    Ritorna il numero di colonne ideale basato sul contesto
-    context: "default", "form", "metrics", "quick_tags"
-    """
-    # Su mobile: 1 colonna, su tablet: 2, su desktop: 3+
-    if context == "form":
-        return 1  # Mobile-first: 1 colonna sul form
-    elif context == "metrics":
-        return 2  # Metrics su 2 colonne
-    elif context == "quick_tags":
-        return 2  # Quick tags su 2 per riga
-    else:
-        return 3  # Default: 3 colonne
+def get_categorie_usate():
+    """Ritorna le categorie effettivamente usate nelle operazioni"""
+    if not st.session_state["operazioni"]:
+        return CATEGORIE
+    
+    df_temp = pd.DataFrame(st.session_state["operazioni"])
+    categorie_usate = df_temp["Categoria"].unique().tolist()
+    
+    # Aggiungi categorie non ancora usate
+    for cat in CATEGORIE:
+        if cat not in categorie_usate:
+            categorie_usate.append(cat)
+    
+    return sorted(categorie_usate)
+
+
+def get_sorgenti_usate():
+    """Ritorna le sorgenti effettivamente usate nelle operazioni"""
+    if not st.session_state["operazioni"]:
+        return SORGENTI
+    
+    df_temp = pd.DataFrame(st.session_state["operazioni"])
+    sorgenti_usate = df_temp["Sorgente"].unique().tolist()
+    
+    # Aggiungi sorgenti non ancora usate
+    for sorg in SORGENTI:
+        if sorg not in sorgenti_usate:
+            sorgenti_usate.append(sorg)
+    
+    return sorted(sorgenti_usate)
 
 # ════════════════════════════════════════════════════════════════════════════
 # SIDEBAR
@@ -183,7 +203,9 @@ with st.sidebar:
     st.divider()
 
     # ── TAB CONFIGURAZIONE ───────────────────────────────────────────────────
-    tab_date, tab_budget, tab_backup = st.tabs(["📅 Date", "💰 Budget", "📂 Backup"])
+    tab_date, tab_budget, tab_preset, tab_backup = st.tabs(
+        ["📅 Date", "💰 Budget", "⚡ Preset", "📂 Backup"]
+    )
 
     with tab_date:
         st.subheader("Date Viaggio")
@@ -226,6 +248,75 @@ with st.sidebar:
             value=3000.0,
             step=500.0
         )
+
+    with tab_preset:
+        st.subheader("Personalizza Preset Rapidi")
+        
+        st.write("Aggiungi i tuoi preset personalizzati")
+        
+        nome_preset = st.text_input(
+            "Nome preset (es: Metro, Sushi, Caffè)",
+            placeholder="Inserisci il nome...",
+            key="preset_name_input"
+        )
+        
+        if nome_preset:
+            col_cat, col_sorg, col_val = st.columns(3)
+            
+            with col_cat:
+                categoria_preset = st.selectbox(
+                    "Categoria",
+                    get_categorie_usate(),
+                    key="preset_cat_select"
+                )
+            
+            with col_sorg:
+                sorgente_preset = st.selectbox(
+                    "Sorgente",
+                    get_sorgenti_usate(),
+                    key="preset_sorg_select"
+                )
+            
+            with col_val:
+                valuta_preset = st.selectbox(
+                    "Valuta",
+                    ["JPY", "EUR"],
+                    key="preset_val_select"
+                )
+            
+            if st.button("➕ Salva Preset", use_container_width=True):
+                st.session_state["quick_presets"][nome_preset] = {
+                    "categoria": categoria_preset,
+                    "sorgente": sorgente_preset,
+                    "valuta": valuta_preset
+                }
+                st.success(f"✅ Preset '{nome_preset}' salvato!")
+                st.rerun()
+        
+        st.write("---")
+        
+        if st.session_state["quick_presets"]:
+            st.write("**I tuoi preset:**")
+            
+            for preset_name in st.session_state["quick_presets"].keys():
+                col_name, col_del = st.columns([4, 1])
+                
+                with col_name:
+                    preset_data = st.session_state["quick_presets"][preset_name]
+                    st.caption(
+                        f"🏷️ {preset_name} | "
+                        f"{preset_data['categoria']} | "
+                        f"{preset_data['sorgente']} | "
+                        f"{preset_data['valuta']}"
+                    )
+                
+                with col_del:
+                    if st.button("🗑️", key=f"del_preset_{preset_name}"):
+                        del st.session_state["quick_presets"][preset_name]
+                        st.success("Eliminato!")
+                        st.rerun()
+        else:
+            st.info("Nessun preset salvato. Creane uno sopra!")
 
     with tab_backup:
         st.subheader("Backup e Ripristino")
@@ -291,39 +382,26 @@ with st.sidebar:
 # ════════════════════════════════════════════════════════════════════════════
 st.header("➕ Nuova Operazione")
 
-# ── QUICK TAGS ───────────────────────────────────────────────────────────
-QUICK_TAGS = {
-    "🚇 Metro": ("Trasporti", "Wallet Contanti", "JPY", 230),
-    "🍜 Ramen": ("Cibo", "Wallet Contanti", "JPY", 1200),
-    "🏪 Konbini": ("Cibo", "Wallet Contanti", "JPY", 500),
-    "🍣 Sushi": ("Cibo", "Carta Credito JPY", "JPY", 3500),
-    "🛍️ Shopping": ("Shopping", "Carta Credito JPY", "JPY", 0),
-    "💴 Prelievo": ("Prelievo ATM", "Wallet Contanti", "JPY", 0),
-}
+# ── QUICK TAGS (Nascosti in expander) ───────────────────────────────────────
+if st.session_state["quick_presets"]:
+    with st.expander("⚡ Preset Rapidi", expanded=False):
+        st.write("Scegli un preset per compilare velocemente i campi:")
+        
+        quick_cols = st.columns(2)
+        for i, (label, vals) in enumerate(st.session_state["quick_presets"].items()):
+            with quick_cols[i % 2]:
+                if st.button(
+                    label,
+                    use_container_width=True,
+                    key=f"qt_{i}"
+                ):
+                    st.session_state["quick_selected"] = vals
+                    st.rerun()
 
-if "quick" not in st.session_state:
-    st.session_state["quick"] = None
-
-st.write("⚡ Preset rapidi")
-
-# Mobile-friendly quick tags (2 per riga)
-quick_cols = st.columns(2)
-for i, (label, vals) in enumerate(QUICK_TAGS.items()):
-    with quick_cols[i % 2]:
-        if st.button(
-            label,
-            use_container_width=True,
-            key=f"qt_{i}"
-        ):
-            st.session_state["quick"] = vals
-
-q = st.session_state["quick"]
+q = st.session_state["quick_selected"]
 
 # ── FORM ─────────────────────────────────────────────────────────────────
 with st.form("form_ins", clear_on_submit=True):
-
-    # Mobile-first: 1 colonna
-    c1 = st.container()
 
     # ── DATI ─────────────────────────────────────────────────────────────
     data_op = st.date_input(
@@ -341,24 +419,32 @@ with st.form("form_ins", clear_on_submit=True):
         date.today()
     )
 
-    cat_idx = CATEGORIE.index(q[0]) if q else 0
+    cat_idx = (
+        get_categorie_usate().index(q["categoria"]) 
+        if q and q.get("categoria") in get_categorie_usate() 
+        else 0
+    )
 
     categoria = st.selectbox(
         "Categoria",
-        CATEGORIE,
+        get_categorie_usate(),
         index=cat_idx
     )
 
     # ── FONTE E VALUTA ───────────────────────────────────────────────────
-    sorg_idx = SORGENTI.index(q[1]) if q else 0
+    sorg_idx = (
+        get_sorgenti_usate().index(q["sorgente"]) 
+        if q and q.get("sorgente") in get_sorgenti_usate() 
+        else 0
+    )
 
     sorgente = st.selectbox(
         "Sorgente",
-        SORGENTI,
+        get_sorgenti_usate(),
         index=sorg_idx
     )
 
-    val_idx = ["JPY", "EUR"].index(q[2]) if q else 0
+    val_idx = ["JPY", "EUR"].index(q["valuta"]) if q and q.get("valuta") else 0
 
     valuta = st.selectbox(
         "Valuta",
@@ -369,7 +455,7 @@ with st.form("form_ins", clear_on_submit=True):
     importo = st.number_input(
         "Importo",
         min_value=0.0,
-        value=float(q[3]) if q else 0.0,
+        value=0.0,
         step=1.0,
         format="%.2f"
     )
@@ -432,7 +518,7 @@ with st.form("form_ins", clear_on_submit=True):
             "Note": nota_fin,
         })
 
-        st.session_state["quick"] = None
+        st.session_state["quick_selected"] = None
 
         st.success(
             f"✅ Spesa registrata per: {destinatario}"
