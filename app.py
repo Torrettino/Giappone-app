@@ -19,7 +19,7 @@ with st.form("form_inserimento"):
     
     with col1:
         stato = st.selectbox("Stato", ["Spesa Effettiva", "Prenotazione"])
-        categoria = st.selectbox("Categoria", ["Trasporti", "Alloggi", "Cibo", "Shopping", "Altro", "Prelievo ATM"])
+        categoria = st.selectbox("Categoria", ["Trasporti", "Alloggi", "Cibo", "Shopping", "Altro", "Souvenir", "Shinkansen", "Prelievo ATM"])
     
     with col2:
         sorgente = st.selectbox("Sorgente Fondo", ["Carta Credito JPY", "Carta Credito EUR", "Carta Debito EUR", "Wallet Contanti"])
