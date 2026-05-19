@@ -47,13 +47,13 @@ oggi_str = date.today().strftime("%Y-%m-%d")
 
 for op in st.session_state["operazioni"]:
 
-    if (
-        op.get("Stato") == "Prenotazione"
-        and op.get("Data Pagamento")
-    ):
-        if op["Data Pagamento"] <= oggi_str:
-            op["Stato"] = "Spesa Effettiva"
+    if op.get("Stato") != "Prenotazione":
+        continue
 
+    if op.get("Data Pagamento"):
+
+        if pd.to_datetime(op["Data Pagamento"]) <= pd.to_datetime(date.today()):
+            op["Stato"] = "Spesa Effettiva"
 # ══════════════════════════════════════════════════════════════════════════════
 # COSTANTI
 # ══════════════════════════════════════════════════════════════════════════════
