@@ -23,6 +23,14 @@ if "operazioni" not in st.session_state:
     st.session_state["operazioni"] = []
 if "tasso_cambio" not in st.session_state:
     st.session_state["tasso_cambio"] = 165.0
+
+# ── AUTOMAZIONE CONVERSIONE PRENOTAZIONI ──────────────────────────────────────
+# Questo blocco controlla ad ogni refresh se una prenotazione è diventata una spesa reale
+oggi_str = date.today().strftime("%Y-%m-%d")
+for op in st.session_state["operazioni"]:
+    if op.get("Stato") == "Prenotazione" and op.get("Data Pagamento"):
+        if op["Data Pagamento"] <= oggi_str:
+            op["Stato"] = "Spesa Effettiva"
  
 # ── FUNZIONI UTILITY ──────────────────────────────────────────────────────────
 CATEGORIE = ["Trasporti", "Alloggi", "Cibo", "Shopping", "Altro", "Prelievo ATM"]
@@ -75,14 +83,14 @@ with st.sidebar:
  
     st.divider()
  
-    # Date viaggio (Aggiornate con i dati predefiniti del viaggio)
+    # Date viaggio predefinite
     st.subheader("📅 Date Viaggio")
     data_inizio = st.date_input("Inizio", value=date(2026, 6, 13), key="d_inizio")
     data_fine   = st.date_input("Fine",   value=date(2026, 6, 26), key="d_fine")
  
     st.divider()
  
-    # Budget globale (Aggiornato con il budget predefinito di 10000)
+    # Budget globale predefinito
     st.subheader("🎯 Budget")
     budget_totale = st.number_input("Budget massimo (€)", min_value=0.0, value=10000.0, step=100.0)
  
@@ -131,7 +139,9 @@ with st.sidebar:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
  
-# ─── SEZIONE 1 — INSERIMENTO NUOVA OPERAZIONE ─────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# SEZIONE 1 — INSERIMENTO NUOVA OPERAZIONE
+# ══════════════════════════════════════════════════════════════════════════════
 st.header("➕ Nuova Operazione")
  
 # Quick-tag buttons
@@ -160,9 +170,11 @@ with st.form("form_ins", clear_on_submit=True):
     c1, c2, c3 = st.columns(3)
  
     with c1:
-        data_op  = st.date_input("Data", date.today())
-        stato    = st.selectbox("Stato", ["Spesa Effettiva", "Prenotazione"])
-        cat_idx  = CATEGORIE.index(q[0]) if q else 0
+        data_op   = st.date_input("Data Inserimento", date.today())
+        stato     = st.selectbox("Stato", ["Spesa Effettiva", "Prenotazione"])
+        # Nuovo campo per gestire la scadenza futura dei pagamenti automatici
+        data_pag  = st.date_input("Data Addebito Automatico (Se Prenotazione)", date.today())
+        cat_idx   = CATEGORIE.index(q[0]) if q else 0
         categoria = st.selectbox("Categoria", CATEGORIE, index=cat_idx)
  
     with c2:
@@ -174,16 +186,19 @@ with st.form("form_ins", clear_on_submit=True):
         n_persone = st.number_input("Dividi tra N persone", min_value=1, value=1, step=1)
  
     with c3:
-        note = st.text_area("Note / Descrizione", placeholder="Es: Cena sushi a Shibuya…", height=140)
+        note = st.text_area("Note / Descrizione", placeholder="Es: Cena sushi a Shibuya…", height=210)
  
     submitted = st.form_submit_button("🚀 Registra", use_container_width=True)
     if submitted and importo > 0:
         imp_split = importo / n_persone
         imp_eur, imp_jpy = converti(imp_split, valuta, tasso_cambio)
         nota_fin = (f"[÷{n_persone}] " if n_persone > 1 else "") + (note if note else "-")
+        
+        # Salviamo la data di pagamento prevista nel database delle operazioni
         st.session_state["operazioni"].append({
             "_id":              str(uuid.uuid4()),
             "Data":             data_op.strftime("%Y-%m-%d"),
+            "Data Pagamento":   data_pag.strftime("%Y-%m-%d"),
             "Stato":            stato,
             "Categoria":        categoria,
             "Sorgente":         sorgente,
@@ -202,7 +217,9 @@ if st.session_state["operazioni"]:
         st.session_state["operazioni"].pop()
         st.rerun()
  
-# ─── SEZIONE 2 — DASHBOARD ────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# SEZIONE 2 — DASHBOARD
+# ══════════════════════════════════════════════════════════════════════════════
 st.divider()
 st.header("📊 Cruscotto Finanziario")
  
@@ -211,6 +228,9 @@ if not st.session_state["operazioni"]:
     st.stop()
  
 df = pd.DataFrame(st.session_state["operazioni"])
+if "Data Pagamento" not in df.columns:
+    df["Data Pagamento"] = df["Data"]
+
 df["Data"] = pd.to_datetime(df["Data"])
  
 spese        = df[df["Stato"] == "Spesa Effettiva"]
@@ -239,18 +259,16 @@ k4.metric(
     delta_color="normal" if budget_residuo >= 0 else "inverse"
 )
  
-# Barra budget globale
+# Barra budget globale (Visuale sul totale complessivo)
 if budget_totale > 0:
-    perc_glob = min(tot_spesa_eur / budget_totale, 1.0)
-    st.write(f"**Utilizzo budget globale:** {perc_glob*100:.1f}%")
+    perc_glob = min((tot_spesa_eur + tot_pren_eur) / budget_totale, 1.0)
+    st.write(f"**Utilizzo budget globale (Speso + Prenotato):** {perc_glob*100:.1f}%")
     st.progress(perc_glob)
-    if tot_spesa_eur > budget_totale:
+    if (tot_spesa_eur + tot_pren_eur) > budget_totale:
         st.error("❌ Budget globale superato!")
  
 # ── PROIEZIONE ────────────────────────────────────────────────────────────────
 durata   = max((data_fine - data_inizio).days + 1, 1)
-trascorsi = max(min((date.today() - data_inizio).days + 1, duration=durata), 1)
-# Piccola correzione di sicurezza per la logica dei giorni trascorsi rispetto alle date fisse
 trascorsi = max(min((date.today() - data_inizio).days + 1, durata), 1) if date.today() >= data_inizio else 1
 rimanenti = max(durata - trascorsi, 0)
  
@@ -277,10 +295,8 @@ with g1:
         rip["%"] = (rip["Importo EUR"] / rip["Importo EUR"].sum() * 100).round(1)
         rip["Label"] = rip["Categoria"] + " (" + rip["%"].astype(str) + "%)"
  
-        # Bar chart colorato
         st.bar_chart(rip.set_index("Categoria")["Importo EUR"])
  
-        # Tabella con percentuali
         rip_display = rip[["Categoria","Importo EUR","%"]].copy()
         rip_display["Importo EUR"] = rip_display["Importo EUR"].map("€ {:,.2f}".format)
         rip_display["%"] = rip_display["%"].map("{:.1f}%".format)
@@ -331,7 +347,9 @@ c4.metric("Contanti",f"¥ {saldo_contanti:,.0f}", f"≈ € {saldo_contanti/tass
  
 st.divider()
  
-# ─── SEZIONE 3 — REGISTRO CON FILTRI E ELIMINAZIONE SELETTIVA ─────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# SEZIONE 3 — REGISTRO CON FILTRI E ELIMINAZIONE SELETTIVA
+# ══════════════════════════════════════════════════════════════════════════════
 st.subheader("📋 Registro Operazioni")
  
 # Filtri
@@ -355,7 +373,7 @@ df_vis["Data"] = df_vis["Data"].dt.strftime("%Y-%m-%d")
 df_vis.insert(0, "🗑️", False)
  
 edited = st.data_editor(
-    df_vis[["🗑️","_id","Data","Stato","Categoria","Sorgente","Importo Originale","Valuta Originale","Importo EUR","Note"]],
+    df_vis[["🗑️","_id","Data","Data Pagamento","Stato","Categoria","Sorgente","Importo Originale","Valuta Originale","Importo EUR","Note"]],
     use_container_width=True,
     hide_index=True,
     column_config={
@@ -363,7 +381,8 @@ edited = st.data_editor(
         "_id":  st.column_config.TextColumn("ID", disabled=True, width="small"),
         "Importo Originale": st.column_config.NumberColumn("Importo", format="%.2f"),
         "Importo EUR":       st.column_config.NumberColumn("EUR",    format="€ %.2f"),
-        "Data":    st.column_config.TextColumn(disabled=True),
+        "Data":    st.column_config.TextColumn("Data Ins.", disabled=True),
+        "Data Pagamento": st.column_config.TextColumn("Data Scad.", disabled=True),
         "Stato":   st.column_config.TextColumn(disabled=True),
         "Categoria": st.column_config.TextColumn(disabled=True),
         "Sorgente":  st.column_config.TextColumn(disabled=True),
