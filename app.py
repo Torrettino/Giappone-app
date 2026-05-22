@@ -131,7 +131,7 @@ try:
     else:
         st.info("Nessuna spesa presente nel database al momento.")
 except Exception as e:
-    st.warning("Impossibile caricare l'anteprima dei dati. Verifica che la tabella sia stata creata correttamente.")st.set_page_config(
+    st.warning("Impossibile caricare l'anteprima dei dati. Verifica che la tabella sia stata creata correttamente.")
     page_title="Travel Budget Tracker",
     page_icon="🇯🇵",
     layout="wide"
