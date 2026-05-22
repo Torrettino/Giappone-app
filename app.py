@@ -1,40 +1,137 @@
 import streamlit as st
-import pandas as pd
-from datetime import datetime, date
-import requests
 import uuid
-import json
-import os
+from datetime import datetime
+from sqlalchemy import text
 
-# ── PERSISTENZA DATI ─────────────────────────────────────────────────────
-DATA_DIR = "dati_spese"
-DATA_FILE = os.path.join(DATA_DIR, "spese_tokyo.json")
-
-# Crea la cartella se non esiste
-if not os.path.exists(DATA_DIR):
-    os.makedirs(DATA_DIR)
-
-def load_data():
-    """Carica i dati dal file JSON"""
-    if os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            st.error(f"Errore nel caricamento dei dati: {e}")
-            return []
-    return []
-
-def save_data(operazioni):
-    """Salva i dati nel file JSON"""
-    try:
-        with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(operazioni, f, indent=2, ensure_ascii=False)
-    except Exception as e:
-        st.error(f"Errore nel salvataggio dei dati: {e}")
-
-# ── PAGE CONFIG ──────────────────────────────────────────────────────────
+# Configurazione della pagina ottimizzata per mobile
 st.set_page_config(
+    page_title="Tokyo Budget Tracker",
+    page_icon="🗼",
+    layout="centered"
+)
+
+st.title("🗼 Tokyo Budget Tracker")
+st.write("Inserimento spese preciso e funzionale.")
+
+# Inizializzazione della connessione nativa PostgreSQL usando i secrets
+try:
+    conn = st.connection("postgresql", type="sql")
+except Exception as e:
+    st.error("Errore di configurazione della connessione. Controlla il file secrets.toml.")
+    st.stop()
+
+# --- CONFIGURAZIONE LISTE FISSE ---
+CATEGORIE = ["Trasporti", "Alloggi", "Cibo", "Shopping", "Altro", "Prelievo ATM", "Ricarica Revolut"]
+SORGENTI = ["Carta Credito JPY", "Carta Credito EUR", "Carta Debito EUR", "Wallet Contanti"]
+DESTINATARI = ["Famiglia", "Francesco", "Guia", "Matilde"]
+
+# --- MASCHERA DI INSERIMENTO ---
+st.subheader("📝 Nuova Spesa")
+
+with st.form("form_spesa", clear_on_submit=True):
+    
+    # 1. Chi spende e Stato
+    destinatario = st.selectbox("Chi effettua la spesa?", DESTINATARI)
+    stato = st.selectbox("Stato della spesa", ["Spesa Effettiva", "Prenotazione"])
+    
+    # 2. Gestione Date Dinamica
+    data_inserimento = st.date_input("Data Spesa", datetime.today())
+    
+    # Logica Condizionale: se è una prenotazione mostra la data di addebito, altrimenti coincide con la spesa
+    if stato == "Prenotazione":
+        data_pagamento = st.date_input("Data Addebito Automatico (Scadenza)", datetime.today())
+    else:
+        data_pagamento = data_inserimento
+
+    # 3. Dettagli Categoria e Pagamento
+    categoria = st.selectbox("Categoria", CATEGORIE)
+    sorgente = st.selectbox("Sorgente di pagamento", SORGENTI)
+    valuta_originale = st.radio("Valuta Originale", ["JPY", "EUR"], horizontal=True)
+
+    # Tasso di cambio di riferimento per il calcolo automatico immediato
+    # Nota: Puoi aggiornare questo valore di default in base al cambio reale del momento
+    tasso_cambio = st.number_input("Tasso di cambio attuale (1 EUR = X JPY)", min_value=1.0, value=165.0, step=0.1)
+
+    # 4. Input Numerico Adattivo basato sulla valuta
+    if valuta_originale == "JPY":
+        importo_orig = st.number_input("Importo (¥ JPY)", min_value=0, value=0, step=100, format="%d")
+        # Calcolo controvalori
+        importo_jpy = int(importo_orig)
+        importo_eur = round(importo_orig / tasso_cambio, 4)
+    else:
+        importo_orig = st.number_input("Importo (€ EUR)", min_value=0.00, value=0.00, step=1.00, format="%.2f")
+        # Calcolo controvalori
+        importo_eur = float(importo_orig)
+        importo_jpy = int(round(importo_orig * tasso_cambio, 0))
+
+    # Mostra un piccolo riepilogo del calcolo in tempo reale
+    st.caption(f"Conversione stimata: **{importo_eur:.2f} €** | **{importo_jpy:,} ¥**")
+
+    # 5. Note
+    note = st.text_area("Note aggiuntive (opzionale)", placeholder="Es. Cena a Shinjuku, Biglietto Tempio...")
+
+    # Pulsante di invio form
+    submit_button = st.form_submit_button("Salva Spesa nel Cloud", use_container_width=True)
+
+# --- LOGICA DI SALVATAGGIO SUL DATABASE ---
+if submit_button:
+    if importo_orig <= 0:
+        st.error("❌ L'importo inserito deve essere maggiore di zero.")
+    else:
+        # Generazione UUID sicuro per la chiave primaria della tabella
+        id_operazione = str(uuid.uuid4())
+        
+        # Query SQL parametrizzata per evitare SQL Injection e formattare i tipi correttamente
+        query_inserimento = text("""
+            INSERT INTO spese_tokyo (
+                id, destinatario, data_inserimento, data_pagamento, stato, 
+                categoria, sorgente, valuta_originale, importo_orig, 
+                importo_eur, importo_jpy, note
+            ) VALUES (
+                :id, :destinatario, :data_inserimento, :data_pagamento, :stato, 
+                :categoria, :sorgente, :valuta_originale, :importo_orig, 
+                :importo_eur, :importo_jpy, :note
+            );
+        """)
+        
+        try:
+            # Esecuzione della transazione in sicurezza usando il context manager di Streamlit
+            with conn.session as session:
+                session.execute(query_inserimento, {
+                    "id": id_operazione,
+                    "destinatario": destinatario,
+                    "data_inserimento": data_inserimento,
+                    "data_pagamento": data_pagamento,
+                    "stato": stato,
+                    "categoria": categoria,
+                    "sorgente": sorgente,
+                    "valuta_originale": valuta_originale,
+                    "importo_orig": importo_orig,
+                    "importo_eur": importo_eur,
+                    "importo_jpy": importo_jpy,
+                    "note": note if note else None
+                })
+                session.commit()
+            st.success("✅ Spesa registrata con successo su Supabase!")
+        except Exception as err:
+            st.error(f"❌ Errore durante il salvataggio sul Database: {err}")
+
+# --- SEZIONE VISUALIZZAZIONE DATI (Per Test) ---
+st.markdown("---")
+st.subheader("📊 Ultime Spese Registrate")
+
+if st.button("Aggiorna Tabella"):
+    st.cache_data.clear()
+
+try:
+    # Recupera gli ultimi 5 inserimenti per confermare visivamente il corretto funzionamento
+    df_spese = conn.query("SELECT data_inserimento, destinatario, categoria, importo_orig, valuta_originale, stato FROM spese_tokyo ORDER BY created_at DESC LIMIT 5;")
+    if not df_spese.empty:
+        st.dataframe(df_spese, use_container_width=True)
+    else:
+        st.info("Nessuna spesa presente nel database al momento.")
+except Exception as e:
+    st.warning("Impossibile caricare l'anteprima dei dati. Verifica che la tabella sia stata creata correttamente.")st.set_page_config(
     page_title="Travel Budget Tracker",
     page_icon="🇯🇵",
     layout="wide"
