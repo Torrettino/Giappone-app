@@ -102,8 +102,24 @@ if "quick_selected" not in st.session_state:
 # Automazione: Trasforma Prenotazioni scadute in Spese Effettive
 for op in st.session_state["operazioni"]:
     if op.get("Stato") == "Prenotazione" and op.get("Data Pagamento"):
-        if pd.to_datetime(op["Data Pagamento"]) <= pd.to_datetime(date.today()):
-            op["Stato"] = "Spesa Effettiva"
+        try:
+            if pd.to_datetime(op["Data Pagamento"]) <= pd.to_datetime(date.today()):
+                op["Stato"] = "Spesa Effettiva"
+        except:
+            pass
+
+# Query SQL riutilizzabile per gli inserimenti
+query_inserimento = text("""
+    INSERT INTO spese_tokyo (
+        id, destinatario, data_inserimento, data_pagamento, stato, 
+        categoria, sorgente, valuta_originale, importo_orig, 
+        importo_eur, importo_jpy, note
+    ) VALUES (
+        :id, :destinatario, :data_inserimento, :data_pagamento, :stato, 
+        :categoria, :sorgente, :valuta_originale, :importo_orig, 
+        :importo_eur, :importo_jpy, :note
+    );
+""")
 
 # ═════════════════════════════════════════════════════════════════════
 # 4. UTILITIES & API CAMBIO LIVE
@@ -130,7 +146,7 @@ def calcola_saldo_revolut():
     return ricariche - spese_rev
 
 # ═════════════════════════════════════════════════════════════════════
-# 5. SIDEBAR DI CONFIGURAZIONE
+# 5. SIDEBAR DI CONFIGURAZIONE & MIGRAZIONE
 # ═════════════════════════════════════════════════════════════════════
 with st.sidebar:
     st.header("⚙️ Configurazione")
@@ -155,7 +171,7 @@ with st.sidebar:
             st.error("Impossibile raggiungere l'API.")
 
     st.divider()
-    tab_date, tab_budget, tab_preset = st.tabs(["📅 Date", "💰 Budget", "⚡ Preset"])
+    tab_date, tab_budget, tab_preset, tab_backup = st.tabs(["📅 Date", "💰 Budget", "⚡ Preset", "📂 Importa CSV"])
 
     with tab_date:
         st.subheader("Date Viaggio")
@@ -189,6 +205,50 @@ with st.sidebar:
                 }
                 st.success(f"✅ Preset '{nome_preset}' salvato!")
                 st.rerun()
+
+    with tab_backup:
+        st.subheader("Migrazione Dati su Cloud")
+        st.caption("Carica qui il tuo file backup per sincronizzarlo definitivamente su Supabase.")
+        file_up = st.file_uploader("Seleziona il file spese_tokyo.csv", type=["csv"])
+        
+        if file_up:
+            try:
+                df_imp = pd.read_csv(file_up)
+                existing_ids = {op["_id"] for op in st.session_state["operazioni"]} if st.session_state["operazioni"] else set()
+                
+                counter = 0
+                with conn.session as session:
+                    for _, row in df_imp.iterrows():
+                        row_id = str(row.get("_id", uuid.uuid4()))
+                        # Se l'ID esiste già nel DB cloud, lo saltiamo per non fare duplicati
+                        if row_id in existing_ids:
+                            continue
+                        
+                        session.execute(query_inserimento, {
+                            "id": row_id,
+                            "destinatario": str(row.get("Destinatario", "Famiglia")),
+                            "data_inserimento": str(row.get("Data", date.today())),
+                            "data_pagamento": str(row.get("Data Pagamento", date.today())),
+                            "stato": str(row.get("Stato", "Spesa Effettiva")),
+                            "categoria": str(row.get("Categoria", "Altro")),
+                            "sorgente": str(row.get("Sorgente", "Wallet Contanti")),
+                            "valuta_originale": str(row.get("Valuta Originale", "JPY")),
+                            "importo_orig": float(row.get("Importo Originale", 0)),
+                            "importo_eur": float(row.get("Importo EUR", 0)),
+                            "importo_jpy": int(row.get("Importo JPY", 0)),
+                            "note": str(row.get("Note", "-")) if pd.notna(row.get("Note")) else "-"
+                        })
+                        counter += 1
+                    session.commit()
+                
+                if counter > 0:
+                    st.success(f"🚀 {counter} vecchie spese caricate con successo su Supabase!")
+                    st.session_state["operazioni"] = load_data_from_supabase()
+                    st.rerun()
+                else:
+                    st.info("Tutti i dati del CSV sono già presenti nel cloud!")
+            except Exception as e:
+                st.error(f"Errore durante l'importazione: {e}")
 
 # ═════════════════════════════════════════════════════════════════════
 # 6. INSERIMENTO NUOVA OPERAZIONE
@@ -230,18 +290,6 @@ with st.form("form_ins", clear_on_submit=True):
         imp_eur, imp_jpy = converti(importo, valuta, tasso_cambio)
         nota_fin = f"[{destinatario}] " + (note if note else "-")
         id_operazione = str(uuid.uuid4())
-
-        query_inserimento = text("""
-            INSERT INTO spese_tokyo (
-                id, destinatario, data_inserimento, data_pagamento, stato, 
-                categoria, sorgente, valuta_originale, importo_orig, 
-                importo_eur, importo_jpy, note
-            ) VALUES (
-                :id, :destinatario, :data_inserimento, :data_pagamento, :stato, 
-                :categoria, :sorgente, :valuta_originale, :importo_orig, 
-                :importo_eur, :importo_jpy, :note
-            );
-        """)
 
         try:
             with conn.session as session:
@@ -306,7 +354,7 @@ st.divider()
 st.header("📊 Cruscotto Finanziario")
 
 if not st.session_state["operazioni"]:
-    st.info("Nessuna operazione ancora registrata nel cloud. Inserisci la prima spesa per sbloccare i grafici!")
+    st.info("Nessuna operazione ancora registrata nel cloud. Sincronizza il CSV o inserisci una spesa per sbloccare i grafici!")
     st.stop()
 
 df = pd.DataFrame(st.session_state["operazioni"])
