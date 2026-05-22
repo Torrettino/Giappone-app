@@ -289,4 +289,61 @@ with col_ricarica:
         try:
             with conn.session as session:
                 session.execute(text("""
-                    INSERT INTO spese_tokyo (id, destinatario, data_inserimento, data_pagamento, stato, categoria, sorgente
+                    INSERT INTO spese_tokyo (id, destinatario, data_inserimento, data_pagamento, stato, categoria, sorgente, valuta_originale, importo_orig, importo_eur, importo_jpy, note)
+                    VALUES (:id, 'Revolut', :data, :data, 'Spesa Effettiva', 'Ricarica Revolut', 'Carta Debito EUR', 'JPY', 10000, :eur, 10000, 'Ricarica Rapida');
+                """), {"id": str(uuid.uuid4()), "data": date.today(), "eur": round(10000 / tasso_cambio, 4)})
+                session.commit()
+            st.success("Ricarica di ¥ 10,000 registrata!")
+            st.session_state["operazioni"] = load_data_from_supabase()
+            st.rerun()
+        except Exception as e:
+            st.error(f"Errore: {e}")
+
+# ═════════════════════════════════════════════════════════════════════
+# 8. CRUSCOTTO FINANZIARIO & GRAFICI
+# ═════════════════════════════════════════════════════════════════════
+st.divider()
+st.header("📊 Cruscotto Finanziario")
+
+if not st.session_state["operazioni"]:
+    st.info("Nessuna operazione ancora registrata nel cloud. Inserisci la prima spesa per sbloccare i grafici!")
+    st.stop()
+
+df = pd.DataFrame(st.session_state["operazioni"])
+df["Data"] = pd.to_datetime(df["Data"])
+
+spese = df[df["Stato"] == "Spesa Effettiva"]
+prenotazioni = df[df["Stato"] == "Prenotazione"]
+spese_reali = spese[(spese["Categoria"] != "Prelievo ATM") & (spese["Categoria"] != "Ricarica Revolut")]
+
+tot_spesa_eur = spese_reali["Importo EUR"].sum()
+tot_spesa_jpy = spese_reali["Importo JPY"].sum()
+tot_pren_eur = prenotazioni["Importo EUR"].sum()
+budget_residuo = budget_totale - tot_spesa_eur - tot_pren_eur
+
+# Visualizzazione KPI
+k1, k2, k3, k4 = st.columns(4)
+k1.metric("Budget Totale", f"€ {budget_totale:,.2f}")
+k2.metric("Speso Effettivo", f"€ {tot_spesa_eur:,.2f}", f"¥ {tot_spesa_jpy:,.0f}")
+k3.metric("Prenotazioni", f"€ {tot_pren_eur:,.2f}")
+k4.metric("💰 Residuo", f"€ {budget_residuo:,.2f}", delta="✅ Ok" if budget_residuo >= 0 else "⚠️ Sforato")
+
+if budget_totale > 0:
+    perc_glob = min(max((tot_spesa_eur + tot_pren_eur) / budget_totale, 0.0), 1.0)
+    st.write(f"Utilizzo budget globale: {perc_glob*100:.1f}%")
+    st.progress(perc_glob)
+
+# Grafici delle Spese
+st.subheader("Pie Chart per Categoria")
+if not spese_reali.empty:
+    rip = spese_reali.groupby("Categoria")["Importo EUR"].sum().reset_index()
+    st.bar_chart(rip.set_index("Categoria")["Importo EUR"])
+
+st.subheader("👨‍👩‍👧 Spese per Persona")
+rip_persona = spese_reali.groupby("Destinatario")["Importo EUR"].sum().reset_index()
+st.dataframe(rip_persona, use_container_width=True, hide_index=True)
+
+# Controllo Plafond Carte
+st.subheader("💳 Controllo Plafond Carte")
+impegni_cc_eur = df[df["Sorgente"] == "Carta Credito EUR"]["Importo EUR"].sum()
+st.metric("Plafond Utilizzato CC EUR", f"€ {impegni_cc_eur:,.2f}", f"Residuo: € {plafond_cc - impegni_cc_eur:,.2f}")
