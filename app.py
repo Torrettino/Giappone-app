@@ -4,6 +4,7 @@ import pandas as pd
 import requests
 import os
 from datetime import datetime, date
+from sqlalchemy import text, create_engine
 
 # ═════════════════════════════════════════════════════════════════════
 # 1. CONFIGURAZIONE PAGINA & STILE
@@ -40,42 +41,39 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🇯🇵 Gestione Spese Tokyo (Locale)")
+st.title("🇯🇵 Gestione Spese Tokyo (Database)")
 
 # ═════════════════════════════════════════════════════════════════════
-# 2. GESTIONE FILE CSV LOCALE
+# 2. CONNESSIONE DATABASE & COSTRUTTORE ENGINE
 # ═════════════════════════════════════════════════════════════════════
-CSV_FILE = "spese_tokyo .csv"
+# Inizializza la connessione nativa di Streamlit
+conn = st.connection("postgresql", type="sql")
 
-def load_local_data():
-    """Carica i dati dal file CSV locale o crea un DataFrame vuoto se non esiste"""
-    if os.path.exists(CSV_FILE):
-        try:
-            df = pd.read_csv(CSV_FILE)
-            # Forza la corretta formattazione delle date
-            df["Data"] = df["Data"].astype(str)
-            df["Data Pagamento"] = df["Data Pagamento"].astype(str)
-            return df
-        except Exception as e:
-            st.error(f"Errore nel caricamento del CSV: {e}")
-    
-    # Se il file non esiste, crea la struttura standard
-    return pd.DataFrame(columns=[
-        "_id", "Destinatario", "Data", "Data Pagamento", "Stato", 
-        "Categoria", "Sorgente", "Valuta Originale", "Importo Originale", 
-        "Importo EUR", "Importo JPY", "Note"
-    ])
+def get_raw_engine():
+    """Genera un engine SQLAlchemy dinamico leggendo i secrets"""
+    if "url" in st.secrets["postgresql"]:
+        return create_engine(st.secrets["postgresql"]["url"])
+    else:
+        p = st.secrets["postgresql"]
+        return create_engine(f"postgresql://{p['username']}:{p['password']}@{p['host']}:{p['port']}/{p['database']}")
 
-def save_local_data(df):
-    """Salva i dati direttamente nel file CSV locale"""
-    try:
-        df.to_csv(CSV_FILE, index=False)
-    except Exception as e:
-        st.error(f"Impossibile salvare il file CSV locale: {e}")
+# Automazione Scadenze Prenotazioni direttamente in SQL
+try:
+    with conn.session as session:
+        session.execute(text("""
+            UPDATE spese 
+            SET "Stato" = 'Spesa Effettiva' 
+            WHERE "Stato" = 'Prenotazione' 
+              AND "Data Pagamento" <= :oggi
+        """), {"oggi": str(date.today())})
+        session.commit()
+except Exception:
+    # Ignora se la tabella non è ancora stata creata/migrata al primo avvio
+    pass
 
-# Inizializzazione Session State con i dati del CSV
-if "df_spese" not in st.session_state:
-    st.session_state["df_spese"] = load_local_data()
+# Inizializzazione Session State per memoria temporanea annullamenti
+if "ultimo_id" not in st.session_state:
+    st.session_state["ultimo_id"] = None
 
 if "tasso_cambio" not in st.session_state:
     st.session_state["tasso_cambio"] = 165.0
@@ -86,24 +84,10 @@ if "quick_presets" not in st.session_state:
 if "quick_selected" not in st.session_state:
     st.session_state["quick_selected"] = None
 
-# Costanti costanti dell'interfaccia
+# Costanti dell'interfaccia
 CATEGORIE = ["Trasporti", "Alloggi", "Cibo", "Shopping", "Altro", "Prelievo ATM", "Ricarica Revolut"]
 SORGENTI = ["Carta Credito JPY", "Carta Credito EUR", "Carta Debito EUR", "Wallet Contanti"]
 DESTINATARI = ["Famiglia", "Francesco", "Guia", "Matilde"]
-
-# Automazione Scadenze Prenotazioni
-df_temp = st.session_state["df_spese"]
-modificato = False
-for idx, row in df_temp.iterrows():
-    if row["Stato"] == "Prenotazione" and pd.notna(row["Data Pagamento"]):
-        try:
-            if pd.to_datetime(row["Data Pagamento"]) <= pd.to_datetime(date.today()):
-                df_temp.at[idx, "Stato"] = "Spesa Effettiva"
-                modificato = True
-        except:
-            pass
-if modificato:
-    save_local_data(df_temp)
 
 # ═════════════════════════════════════════════════════════════════════
 # 3. UTILITIES & API CAMBIO LIVE
@@ -121,16 +105,8 @@ def converti(importo: float, valuta: str, tasso: float):
         return importo, importo * tasso
     return importo / tasso, importo
 
-def calcola_saldo_revolut():
-    df = st.session_state["df_spese"]
-    if df.empty:
-        return 0
-    ricariche = df[df["Categoria"] == "Ricarica Revolut"]["Importo JPY"].sum()
-    spese_rev = df[df["Sorgente"] == "Carta Credito JPY"]["Importo JPY"].sum()
-    return ricariche - spese_rev
-
 # ═════════════════════════════════════════════════════════════════════
-# 4. SIDEBAR DI CONFIGURAZIONE & UTILITY
+# 4. SIDEBAR DI CONFIGURAZIONE & PULSANTE DI MIGRAZIONE
 # ═════════════════════════════════════════════════════════════════════
 with st.sidebar:
     st.header("⚙️ Configurazione")
@@ -153,7 +129,7 @@ with st.sidebar:
             st.rerun()
 
     st.divider()
-    tab_date, tab_budget, tab_preset, tab_export = st.tabs(["📅 Date", "💰 Budget", "⚡ Preset", "💾 Esporta"])
+    tab_date, tab_budget, tab_preset, tab_migrazione = st.tabs(["📅 Date", "💰 Budget", "⚡ Preset", "📦 Migra CSV"])
 
     with tab_date:
         st.subheader("Date Viaggio")
@@ -178,20 +154,31 @@ with st.sidebar:
                 st.session_state["quick_presets"][nome_preset] = {"categoria": cp_cat, "sorgente": cp_sorg, "valuta": cp_val}
                 st.rerun()
 
-    with tab_export:
-        st.subheader("Salvataggio Manuale")
-        st.caption("Se usi l'app su cloud, scarica il CSV aggiornato prima di chiudere la sessione!")
-        csv_buffer = st.session_state["df_spese"].to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="📥 Scarica Backup CSV",
-            data=csv_buffer,
-            file_name="spese_tokyo .csv",
-            mime="text/csv",
-            use_container_width=True
-        )
+    with tab_migrazione:
+        st.subheader("Caricamento Iniziale")
+        st.caption("Esegui questo pulsante UNA SOLA VOLTA in locale sul PC per inviare il tuo file CSV a Supabase.")
+        
+        if st.button("🚀 Riversa CSV nel Database", use_container_width=True):
+            CSV_FILE = "spese_tokyo .csv"
+            if os.path.exists(CSV_FILE):
+                try:
+                    with st.spinner("Lettura e conversione file in corso..."):
+                        df_csv = pd.read_csv(CSV_FILE)
+                        df_csv["Data"] = df_csv["Data"].astype(str)
+                        df_csv["Data Pagamento"] = df_csv["Data Pagamento"].astype(str)
+                        
+                        engine = get_raw_engine()
+                        # Carica i dati creando o inserendo records nella tabella 'spese'
+                        df_csv.to_sql("spese", engine, if_exists="append", index=False)
+                        st.success(f"🔥 Successo! {len(df_csv)} righe migrate su Supabase. Ora l'app è indipendente!")
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Errore di migrazione: {e}")
+            else:
+                st.error(f"File '{CSV_FILE}' non trovato nella cartella del progetto.")
 
 # ═════════════════════════════════════════════════════════════════════
-# 5. INSERIMENTO NUOVA OPERAZIONE
+# 5. INSERIMENTO NUOVA OPERAZIONE SU DATABASE
 # ═════════════════════════════════════════════════════════════════════
 st.header("➕ Nuova Operazione")
 
@@ -224,73 +211,90 @@ with st.form("form_ins", clear_on_submit=True):
     destinatario = st.selectbox("Destinatario Spesa", DESTINATARI)
     note = st.text_area("Note / Descrizione", placeholder="Inserisci dettagli...", height=80)
 
-    submitted = st.form_submit_button("💾 Salva nel File Locale", use_container_width=True)
+    submitted = st.form_submit_button("💾 Salva nel Database cloud", use_container_width=True)
 
     if submitted and importo > 0:
         imp_eur, imp_jpy = converti(importo, valuta, tasso_cambio)
         nota_fin = f"[{destinatario}] " + (note if note else "-")
+        nuovo_id = str(uuid.uuid4())
         
-        # Crea la nuova riga
-        nuova_spesa = pd.DataFrame([{
-            "_id": str(uuid.uuid4()), "Destinatario": destinatario, "Data": str(data_op),
-            "Data Pagamento": str(data_pag), "Stato": stato, "Categoria": categoria, "Sorgente": sorgente,
-            "Valuta Originale": valuta, "Importo Originale": importo, "Importo EUR": round(imp_eur, 4),
-            "Importo JPY": int(round(imp_jpy, 0)), "Note": nota_fin
-        }])
-        
-        # Unisci e salva nel file CSV
-        st.session_state["df_spese"] = pd.concat([nuova_spesa, st.session_state["df_spese"]], ignore_index=True)
-        save_local_data(st.session_state["df_spese"])
-        
-        st.success("✅ Spesa registrata nel file locale!")
-        st.session_state["quick_selected"] = None
-        st.rerun()
+        try:
+            with conn.session as session:
+                query_ins = text("""
+                    INSERT INTO spese (_id, "Destinatario", "Data", "Data Pagamento", "Stato", "Categoria", "Sorgente", "Valuta Originale", "Importo Originale", "Importo EUR", "Importo JPY", "Note")
+                    VALUES (:id, :dest, :data, :data_p, :stato, :cat, :sorg, :val, :imp, :eur, :jpy, :note)
+                """)
+                session.execute(query_ins, {
+                    "id": nuovo_id, "dest": destinatario, "data": str(data_op), "data_p": str(data_pag),
+                    "stato": stato, "cat": categoria, "sorg": sorgente, "val": valuta, "imp": float(importo),
+                    "eur": round(imp_eur, 4), "jpy": int(round(imp_jpy, 0)), "note": nota_fin
+                })
+                session.commit()
+            
+            st.session_state["ultimo_id"] = nuovo_id
+            st.success("✅ Spesa registrata direttamente su Supabase!")
+            st.session_state["quick_selected"] = None
+            st.rerun()
+        except Exception as e:
+            st.error(f"Errore di scrittura nel DB: {e}")
 
-# Bottone Elimina Ultima Spesa
-if not st.session_state["df_spese"].empty:
+# Bottone Annulla Ultima Spesa
+if st.session_state["ultimo_id"]:
     if st.button("⏪ Annulla ultima operazione inserita", use_container_width=True):
-        st.session_state["df_spese"] = st.session_state["df_spese"].iloc[1:].reset_index(drop=True)
-        save_local_data(st.session_state["df_spese"])
-        st.success("Ultima operazione rimossa con successo!")
-        st.rerun()
+        try:
+            with conn.session as session:
+                session.execute(text('DELETE FROM spese WHERE _id = :id'), {"id": st.session_state["ultimo_id"]})
+                session.commit()
+            st.session_state["ultimo_id"] = None
+            st.success("Ultima operazione rimossa dal Database cloud!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Impossibile rimuovere l'operazione: {e}")
 
 # ═════════════════════════════════════════════════════════════════════
-# 6. SEZIONE CONTO REVOLUT
-# ═════════════════════════════════════════════════════════════════════
-st.divider()
-st.header("🏧 Gestione Conto Revolut (¥)")
-saldo_revolut = calcola_saldo_revolut()
-
-col_saldo, col_ricarica = st.columns([2, 1])
-with col_saldo:
-    st.metric("Saldo Attuale Revolut", f"¥ {saldo_revolut:,.0f}")
-
-with col_ricarica:
-    if st.button("💰 Ricarica rapida 10k ¥", use_container_width=True):
-        nuova_ricarica = pd.DataFrame([{
-            "_id": str(uuid.uuid4()), "Destinatario": "Revolut", "Data": str(date.today()),
-            "Data Pagamento": str(date.today()), "Stato": "Spesa Effettiva", "Categoria": "Ricarica Revolut",
-            "Sorgente": "Carta Debito EUR", "Valuta Originale": "JPY", "Importo Originale": 10000.0,
-            "Importo EUR": round(10000 / tasso_cambio, 4), "Importo JPY": 10000, "Note": "Ricarica Rapida"
-        }])
-        st.session_state["df_spese"] = pd.concat([nuova_ricarica, st.session_state["df_spese"]], ignore_index=True)
-        save_local_data(st.session_state["df_spese"])
-        st.success("Ricarica da ¥ 10.000 inserita!")
-        st.rerun()
-
-# ═════════════════════════════════════════════════════════════════════
-# 7. CRUSCOTTO FINANZIARIO & GRAFICI
+# 6. CRUSCOTTO FINANZIARIO LEGATO A SUPABASE
 # ═════════════════════════════════════════════════════════════════════
 st.divider()
 st.header("📊 Cruscotto Finanziario")
 
-df = st.session_state["df_spese"]
-
-if df.empty:
-    st.info("Nessuna spesa presente nel file CSV.")
+# Scarica i dati in tempo reale dal database
+try:
+    df = conn.query('SELECT * FROM spese ORDER BY "Data" DESC;', ttl=0)
+except Exception as e:
+    st.warning("Nessun dato trovato o tabella non ancora pronta su Supabase. Se è il primo avvio, effettua la migrazione dal tab laterale.")
     st.stop()
 
-# Filtri per i calcoli finanziari
+if df.empty:
+    st.info("Il database su Supabase è vuoto. Vai nella barra laterale -> tab 'Migra CSV' per popolarlo.")
+    st.stop()
+
+# Calcolo Saldo Revolut dinamico dal DB
+ricariche_rev = df[df["Categoria"] == "Ricarica Revolut"]["Importo JPY"].sum()
+spese_rev = df[df["Sorgente"] == "Carta Credito JPY"]["Importo JPY"].sum()
+saldo_revolut = ricariche_rev - spese_rev
+
+st.subheader("🏧 Stato Conto Revolut (¥)")
+col_saldo, col_ricarica = st.columns([2, 1])
+col_saldo.metric("Saldo Attuale Revolut", f"¥ {saldo_revolut:,.0f}")
+
+with col_ricarica:
+    if st.button("💰 Ricarica rapida 10k ¥", use_container_width=True):
+        try:
+            with conn.session as session:
+                query_ric = text("""
+                    INSERT INTO spese (_id, "Destinatario", "Data", "Data Pagamento", "Stato", "Categoria", "Sorgente", "Valuta Originale", "Importo Originale", "Importo EUR", "Importo JPY", "Note")
+                    VALUES (:id, 'Revolut', :data, :data, 'Spesa Effettiva', 'Ricarica Revolut', 'Carta Debito EUR', 'JPY', 10000.0, :eur, 10000, 'Ricarica Rapida')
+                """)
+                session.execute(query_ric, {
+                    "id": str(uuid.uuid4()), "data": str(date.today()), "eur": round(10000 / tasso_cambio, 4)
+                })
+                session.commit()
+            st.success("Ricarica da ¥ 10.000 registrata nel cloud!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Errore ricarica: {e}")
+
+# Filtri statistici per la Dashboard
 spese_effettive = df[df["Stato"] == "Spesa Effettiva"]
 prenotazioni = df[df["Stato"] == "Prenotazione"]
 spese_reali = spese_effettive[(spese_effettive["Categoria"] != "Prelievo ATM") & (spese_effettive["Categoria"] != "Ricarica Revolut")]
@@ -300,7 +304,8 @@ tot_spesa_jpy = spese_reali["Importo JPY"].sum()
 tot_pren_eur = prenotazioni["Importo EUR"].sum()
 budget_residuo = budget_totale - tot_spesa_eur - tot_pren_eur
 
-# Metriche KPI
+# Metriche KPI principali
+st.write("")
 k1, k2, k3, k4 = st.columns(4)
 k1.metric("Budget Totale", f"€ {budget_totale:,.2f}")
 k2.metric("Speso Effettivo", f"€ {tot_spesa_eur:,.2f}", f"¥ {tot_spesa_jpy:,.0f}")
@@ -312,7 +317,7 @@ if budget_totale > 0:
     st.write(f"Utilizzo budget globale: {perc_glob*100:.1f}%")
     st.progress(perc_glob)
 
-# Grafici e Tabelle di Controllo
+# Grafici di analisi
 st.subheader("Ripartizione Spese per Categoria (€)")
 if not spese_reali.empty:
     rip_cat = spese_reali.groupby("Categoria")["Importo EUR"].sum().reset_index()
@@ -326,5 +331,5 @@ st.subheader("💳 Controllo Plafond Carte")
 impegni_cc_eur = df[df["Sorgente"] == "Carta Credito EUR"]["Importo EUR"].sum()
 st.metric("Plafond Utilizzato CC EUR", f"€ {impegni_cc_eur:,.2f}", f"Residuo: € {plafond_cc - impegni_cc_eur:,.2f}")
 
-st.subheader("📜 Registro Ultime Operazioni")
+st.subheader("📜 Registro Ultime Operazioni (Live da Supabase)")
 st.dataframe(df, use_container_width=True, hide_index=True)
