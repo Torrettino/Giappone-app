@@ -5,7 +5,7 @@ import requests
 import os
 from datetime import datetime, date
 from sqlalchemy import text, create_engine
- 
+
 # ═════════════════════════════════════════════════════════════════════
 # 1. CONFIGURAZIONE PAGINA & STILE
 # ═════════════════════════════════════════════════════════════════════
@@ -14,7 +14,7 @@ st.set_page_config(
     page_icon="🇯🇵",
     layout="wide"
 )
- 
+
 st.markdown("""
 <style>
     div[data-testid="metric-container"] {
@@ -40,7 +40,7 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
- 
+
 st.title("🇯🇵 Gestione Spese Tokyo (Database)")
 
 # ═════════════════════════════════════════════════════════════════════
@@ -54,17 +54,21 @@ st.title("🇯🇵 Gestione Spese Tokyo (Database)")
 # url = "postgresql://postgres.TUOPROJECTREF:PASSWORD@aws-0-eu-central-1.pooler.supabase.com:6543/postgres"
 #
 # Trovi l'URL esatto in: Supabase Dashboard → Project Settings → Database → Connection Pooling
- 
+
 conn = st.connection("postgresql", type="sql")
- 
+
 def get_raw_engine():
-    secrets = st.secrets["connections"]["postgresql"]
-    if "url" in secrets:
-        url = secrets["url"]
+    """
+    Genera un engine SQLAlchemy dinamico leggendo i secrets.
+    Usa il Connection Pooler di Supabase (porta 6543) — non la porta 5432 diretta.
+    """
+    if "url" in st.secrets["postgresql"]:
+        url = st.secrets["postgresql"]["url"]
     else:
-        url = f"postgresql://{secrets['username']}:{secrets['password']}@{secrets['host']}:{secrets['port']}/{secrets['database']}"
+        p = st.secrets["postgresql"]
+        url = f"postgresql://{p['username']}:{p['password']}@{p['host']}:{p['port']}/{p['database']}"
     return create_engine(url)
- 
+
 # Automazione Scadenze Prenotazioni direttamente in SQL
 try:
     with conn.session as session:
@@ -80,25 +84,25 @@ except Exception as e:
     # Decommenta la riga sotto per debug:
     # st.sidebar.caption(f"⚠️ Autoaggiornamento scadenze non eseguito: {e}")
     pass
- 
+
 # Inizializzazione Session State per memoria temporanea annullamenti
 if "ultimo_id" not in st.session_state:
     st.session_state["ultimo_id"] = None
- 
+
 if "tasso_cambio" not in st.session_state:
     st.session_state["tasso_cambio"] = 165.0
- 
+
 if "quick_presets" not in st.session_state:
     st.session_state["quick_presets"] = {}
- 
+
 if "quick_selected" not in st.session_state:
     st.session_state["quick_selected"] = None
- 
+
 # Costanti dell'interfaccia
 CATEGORIE = ["Trasporti", "Alloggi", "Cibo", "Shopping", "Altro", "Prelievo ATM", "Ricarica Revolut"]
 SORGENTI = ["Carta Credito JPY", "Carta Credito EUR", "Carta Debito EUR", "Wallet Contanti"]
 DESTINATARI = ["Famiglia", "Francesco", "Guia", "Matilde"]
- 
+
 # ═════════════════════════════════════════════════════════════════════
 # 3. UTILITIES & API CAMBIO LIVE
 # ═════════════════════════════════════════════════════════════════════
@@ -109,19 +113,19 @@ def get_live_rate() -> tuple[float, bool]:
         return float(r.json()["rates"]["JPY"]), True
     except:
         return st.session_state["tasso_cambio"], False
- 
+
 def converti(importo: float, valuta: str, tasso: float):
     if valuta == "EUR":
         return importo, importo * tasso
     return importo / tasso, importo
- 
+
 # ═════════════════════════════════════════════════════════════════════
 # 4. SIDEBAR DI CONFIGURAZIONE & PULSANTE DI MIGRAZIONE
 # ═════════════════════════════════════════════════════════════════════
 with st.sidebar:
     st.header("⚙️ Configurazione")
     st.subheader("💱 Tasso EUR→JPY")
- 
+
     tasso_cambio = st.number_input(
         "1 EUR = X JPY",
         min_value=1.0,
@@ -130,28 +134,28 @@ with st.sidebar:
         key="input_tasso"
     )
     st.session_state["tasso_cambio"] = tasso_cambio
- 
+
     if st.button("🔄 Aggiorna tasso live", use_container_width=True):
         rate, ok = get_live_rate()
         if ok:
             st.session_state["tasso_cambio"] = rate
             st.success(f"Tasso aggiornato: ¥ {rate:.2f}")
             st.rerun()
- 
+
     st.divider()
     tab_date, tab_budget, tab_preset, tab_migrazione = st.tabs(["📅 Date", "💰 Budget", "⚡ Preset", "📦 Migra CSV"])
- 
+
     with tab_date:
         st.subheader("Date Viaggio")
         data_inizio = st.date_input("Inizio", value=date(2026, 6, 13))
         data_fine = st.date_input("Fine", value=date(2026, 6, 26))
- 
+
     with tab_budget:
         st.subheader("Budget e Limiti")
         budget_totale = st.number_input("Budget massimo viaggio (€)", min_value=0.0, value=10000.0, step=100.0)
         st.write("---")
         plafond_cc = st.number_input("Plafond Mensile CC EUR (€)", min_value=0.0, value=3000.0, step=500.0)
- 
+
     with tab_preset:
         st.subheader("Preset Rapidi")
         nome_preset = st.text_input("Nome preset (es: Metro, Caffè)", key="p_name")
@@ -167,11 +171,11 @@ with st.sidebar:
                     "valuta": cp_val
                 }
                 st.rerun()
- 
+
     with tab_migrazione:
         st.subheader("Caricamento Iniziale")
         st.caption("Esegui questo pulsante UNA SOLA VOLTA in locale sul PC per inviare il tuo file CSV a Supabase.")
- 
+
         if st.button("🚀 Riversa CSV nel Database", use_container_width=True):
             CSV_FILE = "spese_tokyo .csv"
             if os.path.exists(CSV_FILE):
@@ -181,7 +185,7 @@ with st.sidebar:
                         df_csv = pd.read_csv(CSV_FILE)
                         df_csv["Data"] = df_csv["Data"].astype(str)
                         df_csv["Data Pagamento"] = df_csv["Data Pagamento"].astype(str)
- 
+
                         engine = get_raw_engine()
                         df_csv.to_sql("spese", engine, if_exists="append", index=False)
                         st.success(f"🔥 Successo! {len(df_csv)} righe migrate su Supabase. Ora l'app è indipendente!")
@@ -194,12 +198,12 @@ with st.sidebar:
                         engine.dispose()
             else:
                 st.error(f"File '{CSV_FILE}' non trovato nella cartella del progetto.")
- 
+
 # ═════════════════════════════════════════════════════════════════════
 # 5. INSERIMENTO NUOVA OPERAZIONE SU DATABASE
 # ═════════════════════════════════════════════════════════════════════
 st.header("➕ Nuova Operazione")
- 
+
 if st.session_state["quick_presets"]:
     with st.expander("⚡ Preset Rapidi", expanded=False):
         quick_cols = st.columns(2)
@@ -208,34 +212,34 @@ if st.session_state["quick_presets"]:
                 if st.button(label, use_container_width=True, key=f"qp_{i}"):
                     st.session_state["quick_selected"] = vals
                     st.rerun()
- 
+
 q = st.session_state["quick_selected"]
- 
+
 with st.form("form_ins", clear_on_submit=True):
     data_op = st.date_input("Data Inserimento", date.today())
     stato = st.selectbox("Stato", ["Spesa Effettiva", "Prenotazione"])
     data_pag = st.date_input("Data Addebito Automatico", date.today())
- 
+
     cat_idx = CATEGORIE.index(q["categoria"]) if q and q.get("categoria") in CATEGORIE else 0
     categoria = st.selectbox("Categoria", CATEGORIE, index=cat_idx)
- 
+
     sorg_idx = SORGENTI.index(q["sorgente"]) if q and q.get("sorgente") in SORGENTI else 0
     sorgente = st.selectbox("Sorgente", SORGENTI, index=sorg_idx)
- 
+
     val_idx = ["JPY", "EUR"].index(q["valuta"]) if q and q.get("valuta") else 0
     valuta = st.selectbox("Valuta", ["JPY", "EUR"], index=val_idx)
- 
+
     importo = st.number_input("Importo", min_value=0.0, value=0.0, step=1.0, format="%.2f")
     destinatario = st.selectbox("Destinatario Spesa", DESTINATARI)
     note = st.text_area("Note / Descrizione", placeholder="Inserisci dettagli...", height=80)
- 
+
     submitted = st.form_submit_button("💾 Salva nel Database cloud", use_container_width=True)
- 
+
     if submitted and importo > 0:
         imp_eur, imp_jpy = converti(importo, valuta, tasso_cambio)
         nota_fin = f"[{destinatario}] " + (note if note else "-")
         nuovo_id = str(uuid.uuid4())
- 
+
         try:
             with conn.session as session:
                 query_ins = text("""
@@ -265,14 +269,14 @@ with st.form("form_ins", clear_on_submit=True):
                     "note": nota_fin
                 })
                 session.commit()
- 
+
             st.session_state["ultimo_id"] = nuovo_id
             st.success("✅ Spesa registrata direttamente su Supabase!")
             st.session_state["quick_selected"] = None
             st.rerun()
         except Exception as e:
             st.error(f"Errore di scrittura nel DB: {e}")
- 
+
 # Bottone Annulla Ultima Spesa
 if st.session_state["ultimo_id"]:
     if st.button("⏪ Annulla ultima operazione inserita", use_container_width=True):
@@ -288,13 +292,13 @@ if st.session_state["ultimo_id"]:
             st.rerun()
         except Exception as e:
             st.error(f"Impossibile rimuovere l'operazione: {e}")
- 
+
 # ═════════════════════════════════════════════════════════════════════
 # 6. CRUSCOTTO FINANZIARIO LEGATO A SUPABASE
 # ═════════════════════════════════════════════════════════════════════
 st.divider()
 st.header("📊 Cruscotto Finanziario")
- 
+
 # Scarica i dati in tempo reale dal database
 try:
     df = conn.query('SELECT * FROM spese ORDER BY "Data" DESC;', ttl=0)
@@ -304,20 +308,20 @@ except Exception as e:
         "Se è il primo avvio, effettua la migrazione dal tab laterale."
     )
     st.stop()
- 
+
 if df.empty:
     st.info("Il database su Supabase è vuoto. Vai nella barra laterale -> tab 'Migra CSV' per popolarlo.")
     st.stop()
- 
+
 # Calcolo Saldo Revolut dinamico dal DB
 ricariche_rev = df[df["Categoria"] == "Ricarica Revolut"]["Importo JPY"].sum()
 spese_rev = df[df["Sorgente"] == "Carta Credito JPY"]["Importo JPY"].sum()
 saldo_revolut = ricariche_rev - spese_rev
- 
+
 st.subheader("🏧 Stato Conto Revolut (¥)")
 col_saldo, col_ricarica = st.columns([2, 1])
 col_saldo.metric("Saldo Attuale Revolut", f"¥ {saldo_revolut:,.0f}")
- 
+
 with col_ricarica:
     if st.button("💰 Ricarica rapida 10k ¥", use_container_width=True):
         try:
@@ -344,7 +348,7 @@ with col_ricarica:
             st.rerun()
         except Exception as e:
             st.error(f"Errore ricarica: {e}")
- 
+
 # Filtri statistici per la Dashboard
 spese_effettive = df[df["Stato"] == "Spesa Effettiva"]
 prenotazioni = df[df["Stato"] == "Prenotazione"]
@@ -352,12 +356,12 @@ spese_reali = spese_effettive[
     (spese_effettive["Categoria"] != "Prelievo ATM") &
     (spese_effettive["Categoria"] != "Ricarica Revolut")
 ]
- 
+
 tot_spesa_eur = spese_reali["Importo EUR"].sum()
 tot_spesa_jpy = spese_reali["Importo JPY"].sum()
 tot_pren_eur = prenotazioni["Importo EUR"].sum()
 budget_residuo = budget_totale - tot_spesa_eur - tot_pren_eur
- 
+
 # Metriche KPI principali
 st.write("")
 k1, k2, k3, k4 = st.columns(4)
@@ -365,30 +369,25 @@ k1.metric("Budget Totale", f"€ {budget_totale:,.2f}")
 k2.metric("Speso Effettivo", f"€ {tot_spesa_eur:,.2f}", f"¥ {tot_spesa_jpy:,.0f}")
 k3.metric("Prenotazioni", f"€ {tot_pren_eur:,.2f}")
 k4.metric("💰 Residuo", f"€ {budget_residuo:,.2f}", delta="✅ Ok" if budget_residuo >= 0 else "⚠️ Sforato")
- 
+
 if budget_totale > 0:
     perc_glob = min(max((tot_spesa_eur + tot_pren_eur) / budget_totale, 0.0), 1.0)
     st.write(f"Utilizzo budget globale: {perc_glob*100:.1f}%")
     st.progress(perc_glob)
- 
-# Grafici di analisi
-st.subheader("Ripartizione Spese per Categoria (€)")
-if not spese_reali.empty:
-    rip_cat = spese_reali.groupby("Categoria")["Importo EUR"].sum().reset_index()
-    st.bar_chart(rip_cat.set_index("Categoria")["Importo EUR"])
- 
+
 st.subheader("👨‍👩‍👧 Riepilogo Spese per Persona")
 rip_pers = spese_reali.groupby("Destinatario")["Importo EUR"].sum().reset_index()
 st.dataframe(rip_pers, use_container_width=True, hide_index=True)
- 
-st.subheader("💳 Controllo Plafond Carte")
-impegni_cc_eur = df[df["Sorgente"] == "Carta Credito EUR"]["Importo EUR"].sum()
+
+st.subheader("💳 Controllo Plafond Carta di Credito EUR — Giugno 2026")
+df_giugno = df[df["Data Pagamento"].str.startswith("2026-06")]
+impegni_cc_eur = df_giugno[df_giugno["Sorgente"] == "Carta Credito EUR"]["Importo EUR"].sum()
+residuo_cc = plafond_cc - impegni_cc_eur
 st.metric(
-    "Plafond Utilizzato CC EUR",
+    "Utilizzato CC EUR (giugno)",
     f"€ {impegni_cc_eur:,.2f}",
-    f"Residuo: € {plafond_cc - impegni_cc_eur:,.2f}"
+    f"Residuo: € {residuo_cc:,.2f}" if residuo_cc >= 0 else f"⚠️ Sforato di € {abs(residuo_cc):,.2f}"
 )
- 
+
 st.subheader("📜 Registro Ultime Operazioni (Live da Supabase)")
 st.dataframe(df, use_container_width=True, hide_index=True)
- 
