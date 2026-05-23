@@ -42,7 +42,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
  
 st.title("🇯🇵 Gestione Spese Tokyo (Database)")
- 
+st.write(st.secrets["postgresql"]) 
 # ═════════════════════════════════════════════════════════════════════
 # 2. CONNESSIONE DATABASE & COSTRUTTORE ENGINE
 # ═════════════════════════════════════════════════════════════════════
