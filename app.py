@@ -58,15 +58,11 @@ st.title("🇯🇵 Gestione Spese Tokyo (Database)")
 conn = st.connection("postgresql", type="sql")
  
 def get_raw_engine():
-    """
-    Genera un engine SQLAlchemy dinamico leggendo i secrets.
-    Usa il Connection Pooler di Supabase (porta 6543) — non la porta 5432 diretta.
-    """
-    if "url" in st.secrets["postgresql"]:
-        url = st.secrets["postgresql"]["url"]
+    secrets = st.secrets["connections"]["postgresql"]
+    if "url" in secrets:
+        url = secrets["url"]
     else:
-        p = st.secrets["postgresql"]
-        url = f"postgresql://{p['username']}:{p['password']}@{p['host']}:{p['port']}/{p['database']}"
+        url = f"postgresql://{secrets['username']}:{secrets['password']}@{secrets['host']}:{secrets['port']}/{secrets['database']}"
     return create_engine(url)
  
 # Automazione Scadenze Prenotazioni direttamente in SQL
